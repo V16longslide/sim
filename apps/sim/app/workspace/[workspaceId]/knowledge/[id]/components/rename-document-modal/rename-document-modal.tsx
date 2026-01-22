@@ -39,6 +39,9 @@ export function RenameDocumentModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Check if name has changed from initial value
+  const hasChanges = name.trim() !== initialName.trim()
+
   useEffect(() => {
     if (open) {
       setName(initialName)
@@ -123,7 +126,11 @@ export function RenameDocumentModal({
                 >
                   Cancel
                 </Button>
-                <Button variant='tertiary' type='submit' disabled={isSubmitting || !name?.trim()}>
+                <Button
+                  variant={hasChanges ? 'tertiary' : 'default'}
+                  type='submit'
+                  disabled={isSubmitting || !name?.trim() || !hasChanges}
+                >
                   {isSubmitting ? 'Renaming...' : 'Rename'}
                 </Button>
               </div>

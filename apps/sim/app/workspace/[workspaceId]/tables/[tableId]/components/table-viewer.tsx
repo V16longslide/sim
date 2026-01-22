@@ -13,19 +13,17 @@ import {
   TableRow,
 } from '@/components/emcn'
 import { cn } from '@/lib/core/utils/cn'
-import type { TableRow as TableRowType } from '@/lib/table'
-import { useContextMenu, useRowSelection, useTableData } from '../hooks'
+import { useContextMenu, useInlineEditing, useRowSelection, useTableData } from '../hooks'
 import type { CellViewerData, QueryOptions } from '../lib/types'
-import { ActionBar } from './action-bar'
 import { EmptyRows, LoadingRows } from './body-states'
-import { CellRenderer } from './cell-renderer'
 import { CellViewerModal } from './cell-viewer-modal'
 import { ContextMenu } from './context-menu'
-import { HeaderBar } from './header-bar'
-import { Pagination } from './pagination'
-import { QueryBuilder } from './query-builder'
+import { EditableCell } from './editable-cell'
+import { EditableRow } from './editable-row'
+import { FilterPanel } from './filter-panel'
 import { RowModal } from './row-modal'
 import { SchemaModal } from './schema-modal'
+import { TableToolbar } from './table-toolbar'
 
 export function TableViewer() {
   const params = useParams()
@@ -39,9 +37,7 @@ export function TableViewer() {
     sort: null,
   })
   const [currentPage, setCurrentPage] = useState(0)
-
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [editingRow, setEditingRow] = useState<TableRowType | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
   const [deletingRows, setDeletingRows] = useState<string[]>([])
   const [showSchemaModal, setShowSchemaModal] = useState(false)
 
@@ -56,11 +52,29 @@ export function TableViewer() {
       currentPage,
     })
 
+  const columns = tableData?.schema?.columns || []
+
   const { selectedRows, handleSelectAll, handleSelectRow, clearSelection } = useRowSelection(rows)
 
   const { contextMenu, handleRowContextMenu, closeContextMenu } = useContextMenu()
 
-  const columns = tableData?.schema?.columns || []
+  const {
+    newRows,
+    pendingChanges,
+    addNewRow,
+    updateNewRowCell,
+    updateExistingRowCell,
+    saveChanges,
+    discardChanges,
+    hasPendingChanges,
+    isSaving,
+  } = useInlineEditing({
+    workspaceId,
+    tableId,
+    columns,
+    onSuccess: refetchRows,
+  })
+
   const selectedCount = selectedRows.size
   const hasSelection = selectedCount > 0
   const isAllSelected = rows.length > 0 && selectedCount === rows.length
@@ -73,8 +87,8 @@ export function TableViewer() {
     setShowSchemaModal(true)
   }, [])
 
-  const handleAddRow = useCallback(() => {
-    setShowAddModal(true)
+  const handleToggleFilters = useCallback(() => {
+    setShowFilters((prev) => !prev)
   }, [])
 
   const handleApplyQueryOptions = useCallback(
@@ -91,11 +105,10 @@ export function TableViewer() {
   }, [selectedRows])
 
   const handleContextMenuEdit = useCallback(() => {
-    if (contextMenu.row) {
-      setEditingRow(contextMenu.row)
-    }
+    // For inline editing, we don't need the modal anymore
+    // The cell becomes editable on click
     closeContextMenu()
-  }, [contextMenu.row, closeContextMenu])
+  }, [closeContextMenu])
 
   const handleContextMenuDelete = useCallback(() => {
     if (contextMenu.row) {
@@ -127,6 +140,21 @@ export function TableViewer() {
     []
   )
 
+  const handleRemoveNewRow = useCallback(
+    (tempId: string) => {
+      discardChanges()
+    },
+    [discardChanges]
+  )
+
+  const handlePreviousPage = useCallback(() => {
+    setCurrentPage((p) => Math.max(0, p - 1))
+  }, [])
+
+  const handleNextPage = useCallback(() => {
+    setCurrentPage((p) => Math.min(totalPages - 1, p + 1))
+  }, [totalPages])
+
   if (isLoadingTable) {
     return (
       <div className='flex h-full items-center justify-center'>
@@ -145,34 +173,36 @@ export function TableViewer() {
 
   return (
     <div className='flex h-full flex-col'>
-      <HeaderBar
+      <TableToolbar
         tableName={tableData.name}
         totalCount={totalCount}
         isLoading={isLoadingRows}
         onNavigateBack={handleNavigateBack}
         onShowSchema={handleShowSchema}
         onRefresh={refetchRows}
+        showFilters={showFilters}
+        onToggleFilters={handleToggleFilters}
+        onAddRecord={addNewRow}
+        selectedCount={selectedCount}
+        onDeleteSelected={handleDeleteSelected}
+        onClearSelection={clearSelection}
+        hasPendingChanges={hasPendingChanges}
+        onSaveChanges={saveChanges}
+        onDiscardChanges={discardChanges}
+        isSaving={isSaving}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPreviousPage={handlePreviousPage}
+        onNextPage={handleNextPage}
       />
 
-      <div className='flex shrink-0 flex-col gap-[8px] border-[var(--border)] border-b px-[16px] py-[10px]'>
-        <QueryBuilder
-          columns={columns}
-          onApply={handleApplyQueryOptions}
-          onAddRow={handleAddRow}
-          isLoading={isLoadingRows}
-        />
-        {hasSelection && (
-          <span className='text-[11px] text-[var(--text-tertiary)]'>{selectedCount} selected</span>
-        )}
-      </div>
-
-      {hasSelection && (
-        <ActionBar
-          selectedCount={selectedCount}
-          onDelete={handleDeleteSelected}
-          onClearSelection={clearSelection}
-        />
-      )}
+      <FilterPanel
+        columns={columns}
+        isVisible={showFilters}
+        onApply={handleApplyQueryOptions}
+        onClose={() => setShowFilters(false)}
+        isLoading={isLoadingRows}
+      />
 
       <div className='flex-1 overflow-auto'>
         <Table>
@@ -197,82 +227,71 @@ export function TableViewer() {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* New rows being added */}
+            {newRows.map((newRow) => (
+              <EditableRow
+                key={newRow.tempId}
+                row={newRow}
+                columns={columns}
+                onUpdateCell={updateNewRowCell}
+                onRemove={handleRemoveNewRow}
+              />
+            ))}
+
+            {/* Loading state */}
             {isLoadingRows ? (
               <LoadingRows columns={columns} />
-            ) : rows.length === 0 ? (
+            ) : rows.length === 0 && newRows.length === 0 ? (
               <EmptyRows
                 columnCount={columns.length}
                 hasFilter={!!queryOptions.filter}
-                onAddRow={handleAddRow}
+                onAddRow={addNewRow}
               />
             ) : (
-              rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  className={cn(
-                    'group hover:bg-[var(--surface-4)]',
-                    selectedRows.has(row.id) && 'bg-[var(--surface-5)]'
-                  )}
-                  onContextMenu={(e) => handleRowContextMenu(e, row)}
-                >
-                  <TableCell>
-                    <Checkbox
-                      size='sm'
-                      checked={selectedRows.has(row.id)}
-                      onCheckedChange={() => handleSelectRow(row.id)}
-                    />
-                  </TableCell>
-                  {columns.map((column) => (
-                    <TableCell key={column.name}>
-                      <div className='max-w-[300px] truncate text-[13px]'>
-                        <CellRenderer
-                          value={row.data[column.name]}
-                          column={column}
-                          onCellClick={handleCellClick}
-                        />
-                      </div>
+              /* Existing rows with inline editing */
+              rows.map((row) => {
+                const rowChanges = pendingChanges.get(row.id)
+                const hasChanges = !!rowChanges
+
+                return (
+                  <TableRow
+                    key={row.id}
+                    className={cn(
+                      'group hover:bg-[var(--surface-4)]',
+                      selectedRows.has(row.id) && 'bg-[var(--surface-5)]',
+                      hasChanges && 'bg-amber-500/10'
+                    )}
+                    onContextMenu={(e) => handleRowContextMenu(e, row)}
+                  >
+                    <TableCell>
+                      <Checkbox
+                        size='sm'
+                        checked={selectedRows.has(row.id)}
+                        onCheckedChange={() => handleSelectRow(row.id)}
+                      />
                     </TableCell>
-                  ))}
-                </TableRow>
-              ))
+                    {columns.map((column) => {
+                      const currentValue = rowChanges?.[column.name] ?? row.data[column.name]
+
+                      return (
+                        <TableCell key={column.name}>
+                          <EditableCell
+                            value={currentValue}
+                            column={column}
+                            onChange={(value) => updateExistingRowCell(row.id, column.name, value)}
+                          />
+                        </TableCell>
+                      )
+                    })}
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>
       </div>
 
-      <Pagination
-        currentPage={currentPage}
-        totalPages={totalPages}
-        totalCount={totalCount}
-        onPreviousPage={() => setCurrentPage((p) => Math.max(0, p - 1))}
-        onNextPage={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
-      />
-
-      <RowModal
-        mode='add'
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        table={tableData}
-        onSuccess={() => {
-          refetchRows()
-          setShowAddModal(false)
-        }}
-      />
-
-      {editingRow && (
-        <RowModal
-          mode='edit'
-          isOpen={true}
-          onClose={() => setEditingRow(null)}
-          table={tableData}
-          row={editingRow}
-          onSuccess={() => {
-            refetchRows()
-            setEditingRow(null)
-          }}
-        />
-      )}
-
+      {/* Delete confirmation modal */}
       {deletingRows.length > 0 && (
         <RowModal
           mode='delete'

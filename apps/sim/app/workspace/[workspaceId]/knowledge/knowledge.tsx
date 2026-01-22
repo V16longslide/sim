@@ -265,12 +265,11 @@ export function Knowledge() {
                   </div>
                 </div>
               ) : error ? (
-                <div className='col-span-full flex h-64 items-center justify-center rounded-lg border border-muted-foreground/25 bg-muted/20'>
-                  <div className='text-center'>
-                    <p className='font-medium text-[var(--text-secondary)] text-sm'>
-                      Error loading knowledge bases
-                    </p>
-                    <p className='mt-1 text-[var(--text-muted)] text-xs'>{error}</p>
+                <div className='col-span-full flex h-64 items-center justify-center'>
+                  <div className='text-[var(--text-error)]'>
+                    <span className='text-[13px]'>
+                      Error: {typeof error === 'string' ? error : 'Failed to load knowledge bases'}
+                    </span>
                   </div>
                 </div>
               ) : (

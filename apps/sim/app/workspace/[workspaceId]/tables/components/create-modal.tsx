@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createLogger } from '@sim/logger'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useParams } from 'next/navigation'
 import {
@@ -17,7 +17,9 @@ import {
   ModalFooter,
   ModalHeader,
   Textarea,
+  Tooltip,
 } from '@/components/emcn'
+import { Trash } from '@/components/emcn/icons/trash'
 import type { ColumnDefinition } from '@/lib/table'
 import { useCreateTable } from '@/hooks/queries/use-tables'
 
@@ -54,6 +56,28 @@ export function CreateModal({ isOpen, onClose }: CreateModalProps) {
   const [error, setError] = useState<string | null>(null)
 
   const createTable = useCreateTable(workspaceId)
+
+  // Form validation
+  const validColumns = useMemo(() => columns.filter((col) => col.name.trim()), [columns])
+  const duplicateColumnNames = useMemo(() => {
+    const names = validColumns.map((col) => col.name.toLowerCase())
+    const seen = new Set<string>()
+    const duplicates = new Set<string>()
+    names.forEach((name) => {
+      if (seen.has(name)) {
+        duplicates.add(name)
+      }
+      seen.add(name)
+    })
+    return duplicates
+  }, [validColumns])
+
+  const isFormValid = useMemo(() => {
+    const hasTableName = tableName.trim().length > 0
+    const hasAtLeastOneColumn = validColumns.length > 0
+    const hasNoDuplicates = duplicateColumnNames.size === 0
+    return hasTableName && hasAtLeastOneColumn && hasNoDuplicates
+  }, [tableName, validColumns.length, duplicateColumnNames.size])
 
   const handleAddColumn = () => {
     setColumns([...columns, createEmptyColumn()])
@@ -132,44 +156,39 @@ export function CreateModal({ isOpen, onClose }: CreateModalProps) {
 
   return (
     <Modal open={isOpen} onOpenChange={handleClose}>
-      <ModalContent className='w-[700px]'>
-        <ModalHeader>
-          <div className='flex flex-col gap-[4px]'>
-            <h2 className='font-semibold text-[16px]'>Create New Table</h2>
-            <p className='font-normal text-[13px] text-[var(--text-tertiary)]'>
-              Define your table schema with columns and constraints
-            </p>
-          </div>
-        </ModalHeader>
+      <ModalContent size='lg'>
+        <ModalHeader>Create New Table</ModalHeader>
         <ModalBody className='max-h-[70vh] overflow-y-auto'>
-          <form onSubmit={handleSubmit} className='flex flex-col gap-[20px]'>
+          <form onSubmit={handleSubmit} className='space-y-[12px]'>
             {error && (
-              <div className='rounded-[8px] border border-[var(--status-error-border)] bg-[var(--status-error-bg)] px-[14px] py-[12px] text-[13px] text-[var(--status-error-text)]'>
+              <div className='rounded-[4px] border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm'>
                 {error}
               </div>
             )}
 
             {/* Table Name */}
-            <div className='flex flex-col gap-[8px]'>
-              <Label htmlFor='tableName' className='font-medium text-[13px]'>
-                Table Name*
+            <div>
+              <Label
+                htmlFor='tableName'
+                className='mb-[6.5px] block pl-[2px] font-medium text-[13px] text-[var(--text-primary)]'
+              >
+                Table Name
               </Label>
               <Input
                 id='tableName'
                 value={tableName}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTableName(e.target.value)}
-                placeholder='customers, orders, products'
-                className='h-[38px]'
-                required
+                placeholder='e.g., customer_orders'
+                className='h-9'
               />
-              <p className='text-[12px] text-[var(--text-tertiary)]'>
-                Use lowercase with underscores (e.g., customer_orders)
-              </p>
             </div>
 
             {/* Description */}
-            <div className='flex flex-col gap-[8px]'>
-              <Label htmlFor='description' className='font-medium text-[13px]'>
+            <div>
+              <Label
+                htmlFor='description'
+                className='mb-[6.5px] block pl-[2px] font-medium text-[13px] text-[var(--text-primary)]'
+              >
                 Description
               </Label>
               <Textarea
@@ -185,68 +204,66 @@ export function CreateModal({ isOpen, onClose }: CreateModalProps) {
             </div>
 
             {/* Columns */}
-            <div className='flex flex-col gap-[14px]'>
-              <div className='flex items-center justify-between'>
-                <Label className='font-medium text-[13px]'>Columns*</Label>
-                <Button
-                  type='button'
-                  size='sm'
-                  variant='default'
-                  onClick={handleAddColumn}
-                  className='h-[30px] rounded-[6px] px-[12px] text-[12px]'
-                >
-                  <Plus className='mr-[4px] h-[14px] w-[14px]' />
-                  Add Column
+            <div>
+              <div className='mb-[6.5px] flex items-center justify-between pl-[2px]'>
+                <Label className='font-medium text-[13px] text-[var(--text-primary)]'>
+                  Columns
+                </Label>
+                <Button type='button' size='sm' variant='default' onClick={handleAddColumn}>
+                  <Plus className='mr-1 h-3.5 w-3.5' />
+                  Add
                 </Button>
               </div>
 
               {/* Column Headers */}
-              <div className='flex items-center gap-[10px] rounded-[6px] bg-[var(--bg-secondary)] px-[12px] py-[8px] font-semibold text-[11px] text-[var(--text-tertiary)]'>
-                <div className='flex-1'>Column Name</div>
-                <div className='w-[110px]'>Type</div>
-                <div className='w-[70px] text-center'>Required</div>
-                <div className='w-[70px] text-center'>Unique</div>
-                <div className='w-[36px]' />
+              <div className='mb-2 flex items-center gap-[10px] text-[11px] text-[var(--text-secondary)]'>
+                <div className='flex-1 pl-3'>Name</div>
+                <div className='w-[110px] pl-3'>Type</div>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <div className='w-[70px] cursor-help text-center'>Required</div>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>Field must have a value</Tooltip.Content>
+                </Tooltip.Root>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <div className='w-[70px] cursor-help text-center'>Unique</div>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>No duplicate values allowed</Tooltip.Content>
+                </Tooltip.Root>
+                <div className='w-9' />
               </div>
 
               {/* Column Rows */}
-              <div className='flex flex-col gap-[10px]'>
+              <div className='flex flex-col gap-2'>
                 {columns.map((column) => (
                   <ColumnRow
                     key={column.id}
                     column={column}
                     isRemovable={columns.length > 1}
+                    isDuplicate={duplicateColumnNames.has(column.name.toLowerCase())}
                     onChange={handleColumnChange}
                     onRemove={handleRemoveColumn}
                   />
                 ))}
               </div>
 
-              <p className='text-[12px] text-[var(--text-tertiary)]'>
-                Mark columns as <span className='font-medium'>unique</span> to prevent duplicate
-                values (e.g., id, email)
+              <p className='mt-[6.5px] text-[11px] text-[var(--text-secondary)]'>
+                Mark columns as unique to prevent duplicate values (e.g., id, email)
               </p>
             </div>
           </form>
         </ModalBody>
-        <ModalFooter className='gap-[10px]'>
-          <Button
-            type='button'
-            variant='default'
-            onClick={handleClose}
-            className='min-w-[90px]'
-            disabled={createTable.isPending}
-          >
+        <ModalFooter>
+          <Button variant='default' onClick={handleClose} disabled={createTable.isPending}>
             Cancel
           </Button>
           <Button
-            type='button'
             variant='tertiary'
             onClick={handleSubmit}
-            disabled={createTable.isPending}
-            className='min-w-[120px]'
+            disabled={createTable.isPending || !isFormValid}
           >
-            {createTable.isPending ? 'Creating...' : 'Create Table'}
+            {createTable.isPending ? 'Creating...' : 'Create'}
           </Button>
         </ModalFooter>
       </ModalContent>
@@ -257,68 +274,76 @@ export function CreateModal({ isOpen, onClose }: CreateModalProps) {
 interface ColumnRowProps {
   column: ColumnWithId
   isRemovable: boolean
+  isDuplicate: boolean
   onChange: (columnId: string, field: keyof ColumnDefinition, value: string | boolean) => void
   onRemove: (columnId: string) => void
 }
 
-function ColumnRow({ column, isRemovable, onChange, onRemove }: ColumnRowProps) {
+function ColumnRow({ column, isRemovable, isDuplicate, onChange, onRemove }: ColumnRowProps) {
   return (
-    <div className='flex items-center gap-[10px]'>
-      {/* Column Name */}
-      <div className='flex-1'>
-        <Input
-          value={column.name}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            onChange(column.id, 'name', e.target.value)
-          }
-          placeholder='column_name'
-          className='h-[36px]'
-        />
-      </div>
+    <div className='flex flex-col gap-1'>
+      <div className='flex items-center gap-[10px]'>
+        {/* Column Name */}
+        <div className='flex-1'>
+          <Input
+            value={column.name}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange(column.id, 'name', e.target.value)
+            }
+            placeholder='column_name'
+            className={`h-9 ${isDuplicate ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+          />
+        </div>
 
-      {/* Column Type */}
-      <div className='w-[110px]'>
-        <Combobox
-          options={COLUMN_TYPE_OPTIONS}
-          value={column.type}
-          selectedValue={column.type}
-          onChange={(value) => onChange(column.id, 'type', value as ColumnDefinition['type'])}
-          placeholder='Type'
-          editable={false}
-          filterOptions={false}
-          className='h-[36px]'
-        />
-      </div>
+        {/* Column Type */}
+        <div className='w-[110px]'>
+          <Combobox
+            options={COLUMN_TYPE_OPTIONS}
+            value={column.type}
+            selectedValue={column.type}
+            onChange={(value) => onChange(column.id, 'type', value as ColumnDefinition['type'])}
+            placeholder='Type'
+            editable={false}
+            filterOptions={false}
+            className='h-9'
+          />
+        </div>
 
-      {/* Required Checkbox */}
-      <div className='flex w-[70px] items-center justify-center'>
-        <Checkbox
-          checked={column.required}
-          onCheckedChange={(checked) => onChange(column.id, 'required', checked === true)}
-        />
-      </div>
+        {/* Required Checkbox */}
+        <div className='flex w-[70px] items-center justify-center'>
+          <Checkbox
+            checked={column.required}
+            onCheckedChange={(checked) => onChange(column.id, 'required', checked === true)}
+          />
+        </div>
 
-      {/* Unique Checkbox */}
-      <div className='flex w-[70px] items-center justify-center'>
-        <Checkbox
-          checked={column.unique}
-          onCheckedChange={(checked) => onChange(column.id, 'unique', checked === true)}
-        />
-      </div>
+        {/* Unique Checkbox */}
+        <div className='flex w-[70px] items-center justify-center'>
+          <Checkbox
+            checked={column.unique}
+            onCheckedChange={(checked) => onChange(column.id, 'unique', checked === true)}
+          />
+        </div>
 
-      {/* Delete Button */}
-      <div className='w-[36px]'>
-        <Button
-          type='button'
-          size='sm'
-          variant='ghost'
-          onClick={() => onRemove(column.id)}
-          disabled={!isRemovable}
-          className='h-[36px] w-[36px] p-0 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-error)] hover:text-[var(--text-error)]'
-        >
-          <Trash2 className='h-[15px] w-[15px]' />
-        </Button>
+        {/* Delete Button */}
+        <div className='w-9'>
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <Button
+                type='button'
+                variant='ghost'
+                onClick={() => onRemove(column.id)}
+                disabled={!isRemovable}
+                className='h-9 w-9 p-0'
+              >
+                <Trash />
+              </Button>
+            </Tooltip.Trigger>
+            <Tooltip.Content>Remove column</Tooltip.Content>
+          </Tooltip.Root>
+        </div>
       </div>
+      {isDuplicate && <p className='mt-1 pl-1 text-destructive text-sm'>Duplicate column name</p>}
     </div>
   )
 }

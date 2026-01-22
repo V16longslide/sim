@@ -53,7 +53,7 @@ export function EmptyRows({ columnCount, hasFilter, onAddRow }: EmptyRowsProps) 
   return (
     <TableRow>
       <TableCell colSpan={columnCount + 1} className='h-[160px]'>
-        <div className='fixed left-1/2 -translate-x-1/2'>
+        <div className='flex h-full w-full items-center justify-center'>
           <div className='flex flex-col items-center gap-[12px]'>
             <span className='text-[13px] text-[var(--text-tertiary)]'>
               {hasFilter ? 'No rows match your filter' : 'No data'}

@@ -300,7 +300,7 @@ export function EditChunkModal({
               </Button>
               {userPermissions.canEdit && (
                 <Button
-                  variant='tertiary'
+                  variant={hasUnsavedChanges ? 'tertiary' : 'default'}
                   onClick={handleSaveContent}
                   type='button'
                   disabled={!isFormValid || isSaving || !hasUnsavedChanges || isNavigating}

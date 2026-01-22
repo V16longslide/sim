@@ -555,7 +555,7 @@ export function DocumentTagsModal({
                           Cancel
                         </Button>
                         <Button
-                          variant='tertiary'
+                          variant={canSaveTag ? 'tertiary' : 'default'}
                           onClick={saveDocumentTag}
                           className='flex-1'
                           disabled={!canSaveTag}

@@ -1,6 +1,7 @@
-import { type JSX, type MouseEvent, memo, useRef, useState } from 'react'
+import { type JSX, type MouseEvent, memo, useCallback, useRef, useState } from 'react'
 import { isEqual } from 'lodash'
-import { AlertTriangle, ArrowLeftRight, ArrowUp } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, ArrowUp, ExternalLink } from 'lucide-react'
+import { useParams } from 'next/navigation'
 import { Button, Input, Label, Tooltip } from '@/components/emcn/components'
 import { cn } from '@/lib/core/utils/cn'
 import type { FilterRule, SortRule } from '@/lib/table/query-builder/constants'
@@ -175,6 +176,7 @@ const getPreviewValue = (
  * @param wandState - Optional state and handlers for the AI wand feature
  * @param canonicalToggle - Optional canonical toggle metadata and handlers
  * @param canonicalToggleIsDisabled - Whether the canonical toggle is disabled
+ * @param tableLinkState - Optional state for table selector external link
  * @returns The label JSX element, or `null` for switch types or when no title is defined
  */
 const renderLabel = (
@@ -200,7 +202,11 @@ const renderLabel = (
     disabled?: boolean
     onToggle?: () => void
   },
-  canonicalToggleIsDisabled?: boolean
+  canonicalToggleIsDisabled?: boolean,
+  tableLinkState?: {
+    hasSelectedTable: boolean
+    onNavigateToTable: () => void
+  }
 ): JSX.Element | null => {
   if (config.type === 'switch') return null
   if (!config.title) return null
@@ -209,6 +215,11 @@ const renderLabel = (
   const showWand = wandState?.isWandEnabled && !wandState.isPreview && !wandState.disabled
   const showCanonicalToggle = !!canonicalToggle && !wandState?.isPreview
   const canonicalToggleDisabledResolved = canonicalToggleIsDisabled ?? canonicalToggle?.disabled
+  const showTableLink =
+    config.type === 'table-selector' &&
+    tableLinkState?.hasSelectedTable &&
+    !wandState?.isPreview &&
+    !wandState?.disabled
 
   return (
     <div className='flex items-center justify-between gap-[6px] pl-[2px]'>
@@ -287,6 +298,23 @@ const renderLabel = (
               </div>
             )}
           </>
+        )}
+        {showTableLink && (
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <button
+                type='button'
+                className='flex h-[12px] w-[12px] flex-shrink-0 items-center justify-center bg-transparent p-0'
+                onClick={tableLinkState.onNavigateToTable}
+                aria-label='View table'
+              >
+                <ExternalLink className='!h-[12px] !w-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]' />
+              </button>
+            </Tooltip.Trigger>
+            <Tooltip.Content side='top'>
+              <p>View table</p>
+            </Tooltip.Content>
+          </Tooltip.Root>
         )}
         {showCanonicalToggle && (
           <button
@@ -368,6 +396,9 @@ function SubBlockComponent({
   allowExpandInPreview,
   canonicalToggle,
 }: SubBlockProps): JSX.Element {
+  const params = useParams()
+  const workspaceId = params.workspaceId as string
+
   const [isValidJson, setIsValidJson] = useState(true)
   const [isSearchActive, setIsSearchActive] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -384,6 +415,20 @@ function SubBlockComponent({
 
   // Check if wand is enabled for this sub-block
   const isWandEnabled = config.wandConfig?.enabled ?? false
+
+  // Table selector link state
+  const tableValue = subBlockValues?.[config.id]?.value
+  const tableId = typeof tableValue === 'string' ? tableValue : null
+  const hasSelectedTable = Boolean(tableId && !tableId.startsWith('<'))
+
+  /**
+   * Handles navigation to the selected table in a new tab.
+   */
+  const handleNavigateToTable = useCallback(() => {
+    if (tableId && workspaceId) {
+      window.open(`/workspace/${workspaceId}/tables/${tableId}`, '_blank')
+    }
+  }, [workspaceId, tableId])
 
   /**
    * Handles wand icon click to activate inline prompt mode.
@@ -992,7 +1037,11 @@ function SubBlockComponent({
           searchInputRef,
         },
         canonicalToggle,
-        Boolean(canonicalToggle?.disabled || disabled || isPreview)
+        Boolean(canonicalToggle?.disabled || disabled || isPreview),
+        {
+          hasSelectedTable,
+          onNavigateToTable: handleNavigateToTable,
+        }
       )}
       {renderInput()}
     </div>

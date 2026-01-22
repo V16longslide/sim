@@ -70,6 +70,12 @@ export function EditKnowledgeBaseModal({
   })
 
   const nameValue = watch('name')
+  const descriptionValue = watch('description')
+
+  // Check if form values have changed from initial values
+  const hasChanges =
+    nameValue?.trim() !== initialName.trim() ||
+    (descriptionValue?.trim() || '') !== (initialDescription?.trim() || '')
 
   useEffect(() => {
     if (open) {
@@ -159,9 +165,9 @@ export function EditKnowledgeBaseModal({
                   Cancel
                 </Button>
                 <Button
-                  variant='tertiary'
+                  variant={hasChanges ? 'tertiary' : 'default'}
                   type='submit'
-                  disabled={isSubmitting || !nameValue?.trim()}
+                  disabled={isSubmitting || !nameValue?.trim() || !hasChanges}
                 >
                   {isSubmitting ? 'Saving...' : 'Save'}
                 </Button>

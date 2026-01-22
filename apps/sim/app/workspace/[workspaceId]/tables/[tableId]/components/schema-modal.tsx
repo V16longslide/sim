@@ -1,10 +1,11 @@
-import { Info, X } from 'lucide-react'
 import {
   Badge,
   Button,
   Modal,
   ModalBody,
   ModalContent,
+  ModalFooter,
+  ModalHeader,
   Table,
   TableBody,
   TableCell,
@@ -13,7 +14,6 @@ import {
   TableRow,
 } from '@/components/emcn'
 import type { ColumnDefinition } from '@/lib/table'
-import { getTypeBadgeVariant } from '../lib/utils'
 
 interface SchemaModalProps {
   isOpen: boolean
@@ -24,20 +24,9 @@ interface SchemaModalProps {
 export function SchemaModal({ isOpen, onClose, columns }: SchemaModalProps) {
   return (
     <Modal open={isOpen} onOpenChange={onClose}>
-      <ModalContent className='w-[500px] duration-100'>
-        <div className='flex items-center justify-between gap-[8px] px-[16px] py-[10px]'>
-          <div className='flex min-w-0 items-center gap-[8px]'>
-            <Info className='h-[14px] w-[14px] text-[var(--text-tertiary)]' />
-            <span className='font-medium text-[14px] text-[var(--text-primary)]'>Table Schema</span>
-            <Badge variant='gray' size='sm'>
-              {columns.length} columns
-            </Badge>
-          </div>
-          <Button variant='ghost' size='sm' onClick={onClose}>
-            <X className='h-[14px] w-[14px]' />
-          </Button>
-        </div>
-        <ModalBody className='p-0'>
+      <ModalContent size='sm'>
+        <ModalHeader>Table Schema</ModalHeader>
+        <ModalBody>
           <div className='max-h-[400px] overflow-auto'>
             <Table>
               <TableHeader>
@@ -50,23 +39,21 @@ export function SchemaModal({ isOpen, onClose, columns }: SchemaModalProps) {
               <TableBody>
                 {columns.map((column) => (
                   <TableRow key={column.name}>
-                    <TableCell className='font-mono text-[12px] text-[var(--text-primary)]'>
-                      {column.name}
-                    </TableCell>
+                    <TableCell>{column.name}</TableCell>
                     <TableCell>
-                      <Badge variant={getTypeBadgeVariant(column.type)} size='sm'>
+                      <Badge variant='gray-secondary' size='sm'>
                         {column.type}
                       </Badge>
                     </TableCell>
-                    <TableCell className='text-[12px]'>
+                    <TableCell>
                       <div className='flex gap-[6px]'>
                         {column.required && (
-                          <Badge variant='red' size='sm'>
+                          <Badge variant='gray-secondary' size='sm'>
                             required
                           </Badge>
                         )}
                         {column.unique && (
-                          <Badge variant='purple' size='sm'>
+                          <Badge variant='gray-secondary' size='sm'>
                             unique
                           </Badge>
                         )}
@@ -81,6 +68,11 @@ export function SchemaModal({ isOpen, onClose, columns }: SchemaModalProps) {
             </Table>
           </div>
         </ModalBody>
+        <ModalFooter>
+          <Button variant='default' onClick={() => onClose(false)}>
+            Close
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   )

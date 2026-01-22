@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Badge, DocumentAttachment, Tooltip } from '@/components/emcn'
+import { Badge, Button, DocumentAttachment, Tooltip } from '@/components/emcn'
 import { BaseTagsModal } from '@/app/workspace/[workspaceId]/knowledge/[id]/components'
 import { useUserPermissionsContext } from '@/app/workspace/[workspaceId]/providers/workspace-permissions-provider'
 import { useContextMenu } from '@/app/workspace/[workspaceId]/w/components/sidebar/hooks'
@@ -143,6 +143,7 @@ export function BaseCard({
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isTagsModalOpen, setIsTagsModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
 
   const searchParams = new URLSearchParams({
     kbName: title,
@@ -150,6 +151,23 @@ export function BaseCard({
   const href = `/workspace/${workspaceId}/knowledge/${id || title.toLowerCase().replace(/\s+/g, '-')}?${searchParams.toString()}`
 
   const shortId = id ? `kb-${id.slice(0, 8)}` : ''
+
+  const handleMenuButtonClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (menuButtonRef.current) {
+        const rect = menuButtonRef.current.getBoundingClientRect()
+        const syntheticEvent = {
+          preventDefault: () => {},
+          stopPropagation: () => {},
+          clientX: rect.right,
+          clientY: rect.bottom,
+        } as React.MouseEvent
+        handleContextMenu(syntheticEvent)
+      }
+    },
+    [handleContextMenu]
+  )
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -223,9 +241,24 @@ export function BaseCard({
             <h3 className='min-w-0 flex-1 truncate font-medium text-[14px] text-[var(--text-primary)]'>
               {title}
             </h3>
-            {shortId && (
-              <Badge className='flex-shrink-0 rounded-[4px] text-[12px]'>{shortId}</Badge>
-            )}
+            <div className='flex items-center gap-[4px]'>
+              {shortId && (
+                <Badge className='flex-shrink-0 rounded-[4px] text-[12px]'>{shortId}</Badge>
+              )}
+              <Button
+                ref={menuButtonRef}
+                variant='ghost'
+                size='sm'
+                className='h-[20px] w-[20px] flex-shrink-0 p-0 text-[var(--text-tertiary)]'
+                onClick={handleMenuButtonClick}
+              >
+                <svg className='h-[14px] w-[14px]' viewBox='0 0 16 16' fill='currentColor'>
+                  <circle cx='3' cy='8' r='1.5' />
+                  <circle cx='8' cy='8' r='1.5' />
+                  <circle cx='13' cy='8' r='1.5' />
+                </svg>
+              </Button>
+            </div>
           </div>
 
           <div className='flex flex-1 flex-col gap-[8px]'>

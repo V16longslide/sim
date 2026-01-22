@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createLogger } from '@sim/logger'
-import { AlertCircle } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import {
+  Badge,
   Button,
   Checkbox,
   Input,
@@ -92,6 +92,13 @@ function formatValueForInput(value: unknown, type: string): string {
   return String(value)
 }
 
+function isFieldEmpty(value: unknown, type: string): boolean {
+  if (value === null || value === undefined) return true
+  if (type === 'boolean') return false // booleans always have a value (true/false)
+  if (typeof value === 'string') return value.trim() === ''
+  return false
+}
+
 export function RowModal({ mode, isOpen, onClose, table, row, rowIds, onSuccess }: RowModalProps) {
   const params = useParams()
   const workspaceId = params.workspaceId as string
@@ -102,6 +109,12 @@ export function RowModal({ mode, isOpen, onClose, table, row, rowIds, onSuccess 
   const [rowData, setRowData] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Check if all required fields are filled
+  const hasRequiredFields = useMemo(() => {
+    const requiredColumns = columns.filter((col) => col.required)
+    return requiredColumns.every((col) => !isFieldEmpty(rowData[col.name], col.type))
+  }, [columns, rowData])
 
   // Initialize form data based on mode
   useEffect(() => {
@@ -228,43 +241,24 @@ export function RowModal({ mode, isOpen, onClose, table, row, rowIds, onSuccess 
 
     return (
       <Modal open={isOpen} onOpenChange={handleClose}>
-        <ModalContent className='w-[480px]'>
-          <ModalHeader>
-            <div className='flex items-center gap-[10px]'>
-              <div className='flex h-[36px] w-[36px] items-center justify-center rounded-[8px] bg-[var(--bg-error)] text-[var(--text-error)]'>
-                <AlertCircle className='h-[18px] w-[18px]' />
-              </div>
-              <h2 className='font-semibold text-[16px]'>
-                Delete {isSingleRow ? 'Row' : `${deleteCount} Rows`}
-              </h2>
-            </div>
-          </ModalHeader>
+        <ModalContent size='sm'>
+          <ModalHeader>Delete {isSingleRow ? 'Row' : `${deleteCount} Rows`}</ModalHeader>
           <ModalBody>
-            <div className='flex flex-col gap-[16px]'>
-              <ErrorMessage error={error} />
-              <p className='text-[14px] text-[var(--text-secondary)]'>
-                Are you sure you want to delete {isSingleRow ? 'this row' : 'these rows'}? This
-                action cannot be undone.
-              </p>
-            </div>
+            <ErrorMessage error={error} />
+            <p className='text-[12px] text-[var(--text-secondary)]'>
+              Are you sure you want to delete{' '}
+              <span className='font-medium text-[var(--text-primary)]'>
+                {isSingleRow ? '1 row' : `${deleteCount} rows`}
+              </span>
+              ? This will permanently remove the data.{' '}
+              <span className='text-[var(--text-error)]'>This action cannot be undone.</span>
+            </p>
           </ModalBody>
-          <ModalFooter className='gap-[10px]'>
-            <Button
-              type='button'
-              variant='default'
-              onClick={handleClose}
-              className='min-w-[90px]'
-              disabled={isSubmitting}
-            >
+          <ModalFooter>
+            <Button variant='default' onClick={handleClose} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button
-              type='button'
-              variant='destructive'
-              onClick={handleDelete}
-              disabled={isSubmitting}
-              className='min-w-[120px]'
-            >
+            <Button variant='destructive' onClick={handleDelete} disabled={isSubmitting}>
               {isSubmitting ? 'Deleting...' : 'Delete'}
             </Button>
           </ModalFooter>
@@ -277,19 +271,12 @@ export function RowModal({ mode, isOpen, onClose, table, row, rowIds, onSuccess 
 
   return (
     <Modal open={isOpen} onOpenChange={handleClose}>
-      <ModalContent className='w-[600px]'>
-        <ModalHeader>
-          <div className='flex flex-col gap-[4px]'>
-            <h2 className='font-semibold text-[16px]'>{isAddMode ? 'Add New Row' : 'Edit Row'}</h2>
-            <p className='font-normal text-[13px] text-[var(--text-tertiary)]'>
-              {isAddMode ? 'Fill in the values for' : 'Update values for'} {table?.name ?? 'table'}
-            </p>
-          </div>
-        </ModalHeader>
-        <ModalBody className='max-h-[60vh] overflow-y-auto'>
-          <form onSubmit={handleFormSubmit} className='flex flex-col gap-[16px]'>
-            <ErrorMessage error={error} />
+      <ModalContent className='max-w-[480px]'>
+        <ModalHeader>{isAddMode ? 'Add New Row' : 'Edit Row'}</ModalHeader>
+        <ModalBody className='max-h-[60vh] space-y-[12px] overflow-y-auto'>
+          <ErrorMessage error={error} />
 
+          <div className='flex flex-col gap-[8px]'>
             {columns.map((column) => (
               <ColumnField
                 key={column.name}
@@ -298,24 +285,16 @@ export function RowModal({ mode, isOpen, onClose, table, row, rowIds, onSuccess 
                 onChange={(value) => setRowData((prev) => ({ ...prev, [column.name]: value }))}
               />
             ))}
-          </form>
+          </div>
         </ModalBody>
-        <ModalFooter className='gap-[10px]'>
-          <Button
-            type='button'
-            variant='default'
-            onClick={handleClose}
-            className='min-w-[90px]'
-            disabled={isSubmitting}
-          >
+        <ModalFooter>
+          <Button variant='default' onClick={handleClose} disabled={isSubmitting}>
             Cancel
           </Button>
           <Button
-            type='button'
             variant='tertiary'
             onClick={handleFormSubmit}
-            disabled={isSubmitting}
-            className='min-w-[120px]'
+            disabled={isSubmitting || !hasRequiredFields}
           >
             {isSubmitting
               ? isAddMode
@@ -348,19 +327,9 @@ interface ColumnFieldProps {
 }
 
 function ColumnField({ column, value, onChange }: ColumnFieldProps) {
-  return (
-    <div className='flex flex-col gap-[8px]'>
-      <Label htmlFor={column.name} className='font-medium text-[13px]'>
-        {column.name}
-        {column.required && <span className='text-[var(--text-error)]'> *</span>}
-        {column.unique && (
-          <span className='ml-[6px] font-normal text-[11px] text-[var(--text-tertiary)]'>
-            (unique)
-          </span>
-        )}
-      </Label>
-
-      {column.type === 'boolean' ? (
+  const renderInput = () => {
+    if (column.type === 'boolean') {
+      return (
         <div className='flex items-center gap-[8px]'>
           <Checkbox
             id={column.name}
@@ -374,31 +343,56 @@ function ColumnField({ column, value, onChange }: ColumnFieldProps) {
             {value ? 'True' : 'False'}
           </Label>
         </div>
-      ) : column.type === 'json' ? (
+      )
+    }
+
+    if (column.type === 'json') {
+      return (
         <Textarea
           id={column.name}
           value={formatValueForInput(value, column.type)}
           onChange={(e) => onChange(e.target.value)}
           placeholder='{"key": "value"}'
-          rows={4}
+          rows={3}
           className='font-mono text-[12px]'
           required={column.required}
         />
-      ) : (
-        <Input
-          id={column.name}
-          type={column.type === 'number' ? 'number' : column.type === 'date' ? 'date' : 'text'}
-          value={formatValueForInput(value, column.type)}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={`Enter ${column.name}`}
-          className='h-[38px]'
-          required={column.required}
-        />
-      )}
+      )
+    }
 
-      <div className='text-[12px] text-[var(--text-tertiary)]'>
-        Type: {column.type}
-        {!column.required && ' (optional)'}
+    return (
+      <Input
+        id={column.name}
+        type={column.type === 'number' ? 'number' : column.type === 'date' ? 'date' : 'text'}
+        value={formatValueForInput(value, column.type)}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={`Enter ${column.name}`}
+        required={column.required}
+      />
+    )
+  }
+
+  return (
+    <div className='overflow-hidden rounded-[4px] border border-[var(--border-1)]'>
+      <div className='flex items-center justify-between bg-[var(--surface-4)] px-[10px] py-[5px]'>
+        <div className='flex min-w-0 flex-1 items-center gap-[8px]'>
+          <span className='block truncate font-medium text-[14px] text-[var(--text-tertiary)]'>
+            {column.name}
+            {column.required && <span className='text-[var(--text-error)]'> *</span>}
+          </span>
+          <Badge size='sm'>{column.type}</Badge>
+          {column.unique && (
+            <Badge size='sm' variant='gray-secondary'>
+              unique
+            </Badge>
+          )}
+        </div>
+      </div>
+      <div className='border-[var(--border-1)] border-t px-[10px] pt-[6px] pb-[10px]'>
+        <div className='flex flex-col gap-[6px]'>
+          <Label className='text-[13px]'>Value</Label>
+          {renderInput()}
+        </div>
       </div>
     </div>
   )
