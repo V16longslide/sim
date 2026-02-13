@@ -1,12 +1,112 @@
+import { mockAuth, mockCryptoUuid, mockUuid, setupCommonApiMocks } from '@sim/testing'
 import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setupFileApiMocks } from '@/app/api/__test-utils__/utils'
 
 /**
  * Tests for file presigned API route
  *
  * @vitest-environment node
  */
+
+function setupFileApiMocks(
+  options: {
+    authenticated?: boolean
+    storageProvider?: 's3' | 'blob' | 'local'
+    cloudEnabled?: boolean
+  } = {}
+) {
+  const { authenticated = true, storageProvider = 's3', cloudEnabled = true } = options
+
+  setupCommonApiMocks()
+  mockUuid()
+  mockCryptoUuid()
+
+  const authMocks = mockAuth()
+  if (authenticated) {
+    authMocks.setAuthenticated()
+  } else {
+    authMocks.setUnauthenticated()
+  }
+
+  vi.doMock('@/lib/auth/hybrid', () => ({
+    checkHybridAuth: vi.fn().mockResolvedValue({
+      success: authenticated,
+      userId: authenticated ? 'test-user-id' : undefined,
+      error: authenticated ? undefined : 'Unauthorized',
+    }),
+  }))
+
+  vi.doMock('@/app/api/files/authorization', () => ({
+    verifyFileAccess: vi.fn().mockResolvedValue(true),
+    verifyWorkspaceFileAccess: vi.fn().mockResolvedValue(true),
+  }))
+
+  const useBlobStorage = storageProvider === 'blob' && cloudEnabled
+  const useS3Storage = storageProvider === 's3' && cloudEnabled
+
+  vi.doMock('@/lib/uploads/config', () => ({
+    USE_BLOB_STORAGE: useBlobStorage,
+    USE_S3_STORAGE: useS3Storage,
+    UPLOAD_DIR: '/uploads',
+    getStorageConfig: vi.fn().mockReturnValue(
+      useBlobStorage
+        ? {
+            accountName: 'testaccount',
+            accountKey: 'testkey',
+            connectionString: 'testconnection',
+            containerName: 'testcontainer',
+          }
+        : {
+            bucket: 'test-bucket',
+            region: 'us-east-1',
+          }
+    ),
+    isUsingCloudStorage: vi.fn().mockReturnValue(cloudEnabled),
+    getStorageProvider: vi
+      .fn()
+      .mockReturnValue(
+        storageProvider === 'blob' ? 'Azure Blob' : storageProvider === 's3' ? 'S3' : 'Local'
+      ),
+  }))
+
+  const mockGeneratePresignedUploadUrl = vi.fn().mockImplementation(async (opts) => {
+    const timestamp = Date.now()
+    const safeFileName = opts.fileName.replace(/[^a-zA-Z0-9.-]/g, '_')
+    const key = `${opts.context}/${timestamp}-ik3a6w4-${safeFileName}`
+    return {
+      url: 'https://example.com/presigned-url',
+      key,
+    }
+  })
+
+  vi.doMock('@/lib/uploads/core/storage-service', () => ({
+    hasCloudStorage: vi.fn().mockReturnValue(cloudEnabled),
+    generatePresignedUploadUrl: mockGeneratePresignedUploadUrl,
+    generatePresignedDownloadUrl: vi.fn().mockResolvedValue('https://example.com/presigned-url'),
+  }))
+
+  vi.doMock('@/lib/uploads/utils/validation', () => ({
+    validateFileType: vi.fn().mockReturnValue(null),
+  }))
+
+  vi.doMock('@/lib/uploads', () => ({
+    CopilotFiles: {
+      generateCopilotUploadUrl: vi.fn().mockResolvedValue({
+        url: 'https://example.com/presigned-url',
+        key: 'copilot/test-key.txt',
+      }),
+      isImageFileType: vi.fn().mockReturnValue(true),
+    },
+    getStorageProvider: vi
+      .fn()
+      .mockReturnValue(
+        storageProvider === 'blob' ? 'Azure Blob' : storageProvider === 's3' ? 'S3' : 'Local'
+      ),
+    isUsingCloudStorage: vi.fn().mockReturnValue(cloudEnabled),
+  }))
+
+  return { auth: authMocks }
+}
 
 describe('/api/files/presigned', () => {
   beforeEach(() => {
@@ -25,7 +125,7 @@ describe('/api/files/presigned', () => {
   })
 
   describe('POST', () => {
-    it('should return error when cloud storage is not enabled', async () => {
+    it('should return graceful fallback response when cloud storage is not enabled', async () => {
       setupFileApiMocks({
         cloudEnabled: false,
         storageProvider: 's3',
@@ -33,7 +133,7 @@ describe('/api/files/presigned', () => {
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test.txt',
@@ -45,10 +145,14 @@ describe('/api/files/presigned', () => {
       const response = await POST(request)
       const data = await response.json()
 
-      expect(response.status).toBe(500)
-      expect(data.error).toBe('Direct uploads are only available when cloud storage is enabled')
-      expect(data.code).toBe('STORAGE_CONFIG_ERROR')
+      expect(response.status).toBe(200)
       expect(data.directUploadSupported).toBe(false)
+      expect(data.presignedUrl).toBe('')
+      expect(data.fileName).toBe('test.txt')
+      expect(data.fileInfo).toBeDefined()
+      expect(data.fileInfo.name).toBe('test.txt')
+      expect(data.fileInfo.size).toBe(1024)
+      expect(data.fileInfo.type).toBe('text/plain')
     })
 
     it('should return error when fileName is missing', async () => {
@@ -158,7 +262,7 @@ describe('/api/files/presigned', () => {
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test document.txt',
@@ -173,8 +277,8 @@ describe('/api/files/presigned', () => {
       expect(response.status).toBe(200)
       expect(data.presignedUrl).toBe('https://example.com/presigned-url')
       expect(data.fileInfo).toMatchObject({
-        path: expect.stringContaining('/api/files/serve/s3/'),
-        key: expect.stringContaining('test-document.txt'),
+        path: expect.stringMatching(/\/api\/files\/serve\/s3\/.+\?context=chat$/),
+        key: expect.stringMatching(/.*test.document\.txt$/),
         name: 'test document.txt',
         size: 1024,
         type: 'text/plain',
@@ -206,7 +310,7 @@ describe('/api/files/presigned', () => {
       const data = await response.json()
 
       expect(response.status).toBe(200)
-      expect(data.fileInfo.key).toMatch(/^kb\/.*knowledge-doc\.pdf$/)
+      expect(data.fileInfo.key).toMatch(/^knowledge-base\/.*knowledge-doc\.pdf$/)
       expect(data.directUploadSupported).toBe(true)
     })
 
@@ -232,7 +336,8 @@ describe('/api/files/presigned', () => {
 
       expect(response.status).toBe(200)
       expect(data.fileInfo.key).toMatch(/^chat\/.*chat-logo\.png$/)
-      expect(data.fileInfo.path).toMatch(/^https:\/\/.*\.s3\..*\.amazonaws\.com\/chat\//)
+      expect(data.fileInfo.path).toMatch(/\/api\/files\/serve\/s3\/.+\?context=chat$/)
+      expect(data.presignedUrl).toBeTruthy()
       expect(data.directUploadSupported).toBe(true)
     })
 
@@ -244,7 +349,7 @@ describe('/api/files/presigned', () => {
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test document.txt',
@@ -257,24 +362,15 @@ describe('/api/files/presigned', () => {
       const data = await response.json()
 
       expect(response.status).toBe(200)
-      expect(data.presignedUrl).toContain(
-        'https://testaccount.blob.core.windows.net/test-container'
-      )
-      expect(data.presignedUrl).toContain('sas-token-string')
+      expect(data.presignedUrl).toBeTruthy()
+      expect(typeof data.presignedUrl).toBe('string')
       expect(data.fileInfo).toMatchObject({
-        path: expect.stringContaining('/api/files/serve/blob/'),
-        key: expect.stringContaining('test-document.txt'),
+        key: expect.stringMatching(/.*test.document\.txt$/),
         name: 'test document.txt',
         size: 1024,
         type: 'text/plain',
       })
       expect(data.directUploadSupported).toBe(true)
-      expect(data.uploadHeaders).toMatchObject({
-        'x-ms-blob-type': 'BlockBlob',
-        'x-ms-blob-content-type': 'text/plain',
-        'x-ms-meta-originalname': expect.any(String),
-        'x-ms-meta-uploadedat': '2024-01-01T00:00:00.000Z',
-      })
     })
 
     it('should generate chat Azure Blob presigned URL with chat prefix and direct path', async () => {
@@ -299,29 +395,27 @@ describe('/api/files/presigned', () => {
 
       expect(response.status).toBe(200)
       expect(data.fileInfo.key).toMatch(/^chat\/.*chat-logo\.png$/)
-      expect(data.fileInfo.path).toContain(
-        'https://testaccount.blob.core.windows.net/test-container'
-      )
+      expect(data.fileInfo.path).toMatch(/\/api\/files\/serve\/blob\/.+\?context=chat$/)
+      expect(data.presignedUrl).toBeTruthy()
       expect(data.directUploadSupported).toBe(true)
-      expect(data.uploadHeaders).toMatchObject({
-        'x-ms-blob-type': 'BlockBlob',
-        'x-ms-blob-content-type': 'image/png',
-        'x-ms-meta-originalname': expect.any(String),
-        'x-ms-meta-uploadedat': '2024-01-01T00:00:00.000Z',
-        'x-ms-meta-purpose': 'chat',
-      })
     })
 
     it('should return error for unknown storage provider', async () => {
-      // For unknown provider, we'll need to mock manually since our helper doesn't support it
-      vi.doMock('@/lib/uploads', () => ({
-        getStorageProvider: vi.fn().mockReturnValue('unknown'),
-        isUsingCloudStorage: vi.fn().mockReturnValue(true),
+      setupFileApiMocks({
+        cloudEnabled: true,
+        storageProvider: 's3',
+      })
+
+      vi.doMock('@/lib/uploads/core/storage-service', () => ({
+        hasCloudStorage: vi.fn().mockReturnValue(true),
+        generatePresignedUploadUrl: vi
+          .fn()
+          .mockRejectedValue(new Error('Unknown storage provider: unknown')),
       }))
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test.txt',
@@ -333,10 +427,9 @@ describe('/api/files/presigned', () => {
       const response = await POST(request)
       const data = await response.json()
 
-      expect(response.status).toBe(500) // Changed from 400 to 500 (StorageConfigError)
-      expect(data.error).toBe('Unknown storage provider: unknown') // Updated error message
-      expect(data.code).toBe('STORAGE_CONFIG_ERROR')
-      expect(data.directUploadSupported).toBe(false)
+      expect(response.status).toBe(500)
+      expect(data.error).toBeTruthy()
+      expect(typeof data.error).toBe('string')
     })
 
     it('should handle S3 errors gracefully', async () => {
@@ -345,26 +438,14 @@ describe('/api/files/presigned', () => {
         storageProvider: 's3',
       })
 
-      // Override with error-throwing mock while preserving other exports
-      vi.doMock('@/lib/uploads', () => ({
-        getStorageProvider: vi.fn().mockReturnValue('s3'),
-        isUsingCloudStorage: vi.fn().mockReturnValue(true),
-        uploadFile: vi.fn().mockResolvedValue({
-          path: '/api/files/serve/test-key',
-          key: 'test-key',
-          name: 'test.txt',
-          size: 100,
-          type: 'text/plain',
-        }),
-      }))
-
-      vi.doMock('@aws-sdk/s3-request-presigner', () => ({
-        getSignedUrl: vi.fn().mockRejectedValue(new Error('S3 service unavailable')),
+      vi.doMock('@/lib/uploads/core/storage-service', () => ({
+        hasCloudStorage: vi.fn().mockReturnValue(true),
+        generatePresignedUploadUrl: vi.fn().mockRejectedValue(new Error('S3 service unavailable')),
       }))
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test.txt',
@@ -377,10 +458,8 @@ describe('/api/files/presigned', () => {
       const data = await response.json()
 
       expect(response.status).toBe(500)
-      expect(data.error).toBe(
-        'Failed to generate S3 presigned URL - check AWS credentials and permissions'
-      ) // Updated error message
-      expect(data.code).toBe('STORAGE_CONFIG_ERROR')
+      expect(data.error).toBeTruthy()
+      expect(typeof data.error).toBe('string')
     })
 
     it('should handle Azure Blob errors gracefully', async () => {
@@ -389,28 +468,16 @@ describe('/api/files/presigned', () => {
         storageProvider: 'blob',
       })
 
-      vi.doMock('@/lib/uploads', () => ({
-        getStorageProvider: vi.fn().mockReturnValue('blob'),
-        isUsingCloudStorage: vi.fn().mockReturnValue(true),
-        uploadFile: vi.fn().mockResolvedValue({
-          path: '/api/files/serve/test-key',
-          key: 'test-key',
-          name: 'test.txt',
-          size: 100,
-          type: 'text/plain',
-        }),
-      }))
-
-      vi.doMock('@/lib/uploads/blob/blob-client', () => ({
-        getBlobServiceClient: vi.fn().mockImplementation(() => {
-          throw new Error('Azure service unavailable')
-        }),
-        sanitizeFilenameForMetadata: vi.fn((filename) => filename),
+      vi.doMock('@/lib/uploads/core/storage-service', () => ({
+        hasCloudStorage: vi.fn().mockReturnValue(true),
+        generatePresignedUploadUrl: vi
+          .fn()
+          .mockRejectedValue(new Error('Azure service unavailable')),
       }))
 
       const { POST } = await import('@/app/api/files/presigned/route')
 
-      const request = new NextRequest('http://localhost:3000/api/files/presigned', {
+      const request = new NextRequest('http://localhost:3000/api/files/presigned?type=chat', {
         method: 'POST',
         body: JSON.stringify({
           fileName: 'test.txt',
@@ -423,8 +490,8 @@ describe('/api/files/presigned', () => {
       const data = await response.json()
 
       expect(response.status).toBe(500)
-      expect(data.error).toBe('Failed to generate Azure Blob presigned URL') // Updated error message
-      expect(data.code).toBe('STORAGE_CONFIG_ERROR')
+      expect(data.error).toBeTruthy()
+      expect(typeof data.error).toBe('string')
     })
 
     it('should handle malformed JSON gracefully', async () => {
@@ -455,11 +522,11 @@ describe('/api/files/presigned', () => {
 
       const response = await OPTIONS()
 
-      expect(response.status).toBe(204)
-      expect(response.headers.get('Access-Control-Allow-Methods')).toBe(
-        'GET, POST, DELETE, OPTIONS'
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('POST, OPTIONS')
+      expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+        'Content-Type, Authorization'
       )
-      expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type')
     })
   })
 })

@@ -2,6 +2,7 @@ import type {
   MicrosoftExcelTableAddResponse,
   MicrosoftExcelTableToolParams,
 } from '@/tools/microsoft_excel/types'
+import { getSpreadsheetWebUrl } from '@/tools/microsoft_excel/utils'
 import type { ToolConfig } from '@/tools/types'
 
 export const tableAddTool: ToolConfig<
@@ -16,7 +17,6 @@ export const tableAddTool: ToolConfig<
   oauth: {
     required: true,
     provider: 'microsoft-excel',
-    additionalScopes: [],
   },
 
   params: {
@@ -29,20 +29,22 @@ export const tableAddTool: ToolConfig<
     spreadsheetId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the spreadsheet containing the table',
+      visibility: 'user-or-llm',
+      description:
+        'The ID of the spreadsheet/workbook containing the table (e.g., "01ABC123DEF456")',
     },
     tableName: {
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'The name of the table to add rows to',
+      description: 'The name of the table to add rows to (e.g., "Table1", "SalesTable")',
     },
     values: {
       type: 'array',
       required: true,
       visibility: 'user-or-llm',
-      description: 'The data to add to the table (array of arrays or array of objects)',
+      description:
+        'The data to add as a 2D array (e.g., [["Alice", 30], ["Bob", 25]]) or array of objects',
     },
   },
 
@@ -101,15 +103,22 @@ export const tableAddTool: ToolConfig<
     },
   },
 
-  transformResponse: async (response: Response) => {
+  transformResponse: async (response: Response, params?: MicrosoftExcelTableToolParams) => {
     const data = await response.json()
 
     const urlParts = response.url.split('/drive/items/')
     const spreadsheetId = urlParts[1]?.split('/')[0] || ''
 
+    // Fetch the browser-accessible web URL
+    const accessToken = params?.accessToken
+    if (!accessToken) {
+      throw new Error('Access token is required')
+    }
+    const webUrl = await getSpreadsheetWebUrl(spreadsheetId, accessToken)
+
     const metadata = {
       spreadsheetId,
-      spreadsheetUrl: `https://graph.microsoft.com/v1.0/me/drive/items/${spreadsheetId}`,
+      spreadsheetUrl: webUrl,
     }
 
     const result = {

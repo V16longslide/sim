@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type { GmailSearchParams, GmailToolResponse } from '@/tools/gmail/types'
 import {
   createMessagesSummary,
@@ -18,7 +18,6 @@ export const gmailSearchTool: ToolConfig<GmailSearchParams, GmailToolResponse> =
   oauth: {
     required: true,
     provider: 'google-email',
-    additionalScopes: ['https://www.googleapis.com/auth/gmail.labels'],
   },
 
   params: {
@@ -37,8 +36,8 @@ export const gmailSearchTool: ToolConfig<GmailSearchParams, GmailToolResponse> =
     maxResults: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Maximum number of results to return',
+      visibility: 'user-or-llm',
+      description: 'Maximum number of results to return (e.g., 10, 25, 50)',
     },
   },
 
@@ -47,7 +46,7 @@ export const gmailSearchTool: ToolConfig<GmailSearchParams, GmailToolResponse> =
       const searchParams = new URLSearchParams()
       searchParams.append('q', params.query)
       if (params.maxResults) {
-        searchParams.append('maxResults', params.maxResults.toString())
+        searchParams.append('maxResults', Number(params.maxResults).toString())
       }
       return `${GMAIL_API_BASE}/messages?${searchParams.toString()}`
     },
@@ -151,5 +150,43 @@ export const gmailSearchTool: ToolConfig<GmailSearchParams, GmailToolResponse> =
         },
       },
     },
+  },
+}
+
+interface GmailSearchV2Response {
+  success: boolean
+  output: {
+    results: Array<Record<string, any>>
+  }
+}
+
+export const gmailSearchV2Tool: ToolConfig<GmailSearchParams, GmailSearchV2Response> = {
+  id: 'gmail_search_v2',
+  name: 'Gmail Search',
+  description: 'Search emails in Gmail. Returns API-aligned fields only.',
+  version: '2.0.0',
+  oauth: gmailSearchTool.oauth,
+  params: gmailSearchTool.params,
+  request: gmailSearchTool.request,
+  transformResponse: async (response: Response, params?: GmailSearchParams) => {
+    const legacy = await gmailSearchTool.transformResponse!(response, params)
+    if (!legacy.success) {
+      return {
+        success: false,
+        output: { results: [] },
+        error: legacy.error,
+      }
+    }
+
+    const metadata = (legacy.output.metadata || {}) as any
+    return {
+      success: true,
+      output: {
+        results: metadata.results || [],
+      },
+    }
+  },
+  outputs: {
+    results: { type: 'json', description: 'Array of search results' },
   },
 }

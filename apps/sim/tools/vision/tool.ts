@@ -1,5 +1,5 @@
 import type { ToolConfig } from '@/tools/types'
-import type { VisionParams, VisionResponse } from '@/tools/vision/types'
+import type { VisionParams, VisionResponse, VisionV2Params } from '@/tools/vision/types'
 
 export const visionTool: ToolConfig<VisionParams, VisionResponse> = {
   id: 'vision_tool',
@@ -17,9 +17,15 @@ export const visionTool: ToolConfig<VisionParams, VisionResponse> = {
     },
     imageUrl: {
       type: 'string',
-      required: true,
+      required: false,
       visibility: 'user-only',
       description: 'Publicly accessible image URL',
+    },
+    imageFile: {
+      type: 'file',
+      required: false,
+      visibility: 'user-only',
+      description: 'Image file to analyze',
     },
     model: {
       type: 'string',
@@ -37,93 +43,29 @@ export const visionTool: ToolConfig<VisionParams, VisionResponse> = {
 
   request: {
     method: 'POST',
-    url: (params) => {
-      if (params.model?.startsWith('claude-3')) {
-        return 'https://api.anthropic.com/v1/messages'
-      }
-      return 'https://api.openai.com/v1/chat/completions'
-    },
-    headers: (params) => {
-      const headers = {
-        'Content-Type': 'application/json',
-      }
-
-      return params.model?.startsWith('claude-3')
-        ? {
-            ...headers,
-            'x-api-key': params.apiKey,
-            'anthropic-version': '2023-06-01',
-          }
-        : {
-            ...headers,
-            Authorization: `Bearer ${params.apiKey}`,
-          }
-    },
+    url: '/api/tools/vision/analyze',
+    headers: () => ({
+      'Content-Type': 'application/json',
+    }),
     body: (params) => {
-      const defaultPrompt = 'Please analyze this image and describe what you see in detail.'
-      const prompt = params.prompt || defaultPrompt
-
-      if (params.model?.startsWith('claude-3')) {
-        return {
-          model: params.model,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                {
-                  type: 'image',
-                  source: { type: 'url', url: params.imageUrl },
-                },
-              ],
-            },
-          ],
-        }
-      }
-
       return {
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: params.imageUrl,
-                },
-              },
-            ],
-          },
-        ],
-        max_tokens: 1000,
+        apiKey: params.apiKey,
+        imageUrl: params.imageUrl || null,
+        imageFile: params.imageFile || null,
+        model: params.model || 'gpt-5.2',
+        prompt: params.prompt || null,
       }
     },
   },
 
   transformResponse: async (response: Response) => {
     const data = await response.json()
-
-    const result = data.content?.[0]?.text || data.choices?.[0]?.message?.content
-
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to analyze image')
+    }
     return {
       success: true,
-      output: {
-        content: result,
-        model: data.model,
-        tokens: data.content
-          ? data.usage?.input_tokens + data.usage?.output_tokens
-          : data.usage?.total_tokens,
-        usage: data.usage
-          ? {
-              input_tokens: data.usage.input_tokens,
-              output_tokens: data.usage.output_tokens,
-              total_tokens:
-                data.usage.total_tokens || data.usage.input_tokens + data.usage.output_tokens,
-            }
-          : undefined,
-      },
+      output: data.output,
     }
   },
 
@@ -152,5 +94,31 @@ export const visionTool: ToolConfig<VisionParams, VisionResponse> = {
         total_tokens: { type: 'number', description: 'Total tokens consumed' },
       },
     },
+  },
+}
+
+export const visionToolV2: ToolConfig<VisionV2Params, VisionResponse> = {
+  ...visionTool,
+  id: 'vision_tool_v2',
+  name: 'Vision Tool',
+  params: {
+    apiKey: visionTool.params.apiKey,
+    imageFile: {
+      type: 'file',
+      required: true,
+      visibility: 'hidden',
+      description: 'Image file to analyze',
+    },
+    model: visionTool.params.model,
+    prompt: visionTool.params.prompt,
+  },
+  request: {
+    ...visionTool.request,
+    body: (params: VisionV2Params) => ({
+      apiKey: params.apiKey,
+      imageFile: params.imageFile,
+      model: params.model || 'gpt-5.2',
+      prompt: params.prompt || null,
+    }),
   },
 }

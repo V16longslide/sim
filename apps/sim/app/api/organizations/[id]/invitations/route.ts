@@ -9,23 +9,27 @@ import {
   workspace,
   workspaceInvitation,
 } from '@sim/db/schema'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { createLogger } from '@sim/logger'
+import { and, eq, inArray, isNull, or } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import {
   getEmailSubject,
   renderBatchInvitationEmail,
   renderInvitationEmail,
-} from '@/components/emails/render-email'
+} from '@/components/emails'
 import { getSession } from '@/lib/auth'
 import {
   validateBulkInvitations,
   validateSeatAvailability,
 } from '@/lib/billing/validation/seat-management'
-import { sendEmail } from '@/lib/email/mailer'
-import { quickValidateEmail } from '@/lib/email/validation'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
-import { hasWorkspaceAdminAccess } from '@/lib/permissions/utils'
+import { getBaseUrl } from '@/lib/core/utils/urls'
+import { sendEmail } from '@/lib/messaging/email/mailer'
+import { quickValidateEmail } from '@/lib/messaging/email/validation'
+import { hasWorkspaceAdminAccess } from '@/lib/workspaces/permissions/utils'
+import {
+  InvitationsNotAllowedError,
+  validateInvitationsAllowed,
+} from '@/ee/access-control/utils/permission-check'
 
 const logger = createLogger('OrganizationInvitations')
 
@@ -115,6 +119,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    await validateInvitationsAllowed(session.user.id)
 
     const { id: organizationId } = await params
     const url = new URL(request.url)
@@ -244,16 +250,40 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const emailsToInvite = newEmails.filter((email: string) => !pendingEmails.includes(email))
 
     if (emailsToInvite.length === 0) {
+      const isSingleEmail = processedEmails.length === 1
+      const existingMembersEmails = processedEmails.filter((email: string) =>
+        existingEmails.includes(email)
+      )
+      const pendingInvitationEmails = processedEmails.filter((email: string) =>
+        pendingEmails.includes(email)
+      )
+
+      if (isSingleEmail) {
+        if (existingMembersEmails.length > 0) {
+          return NextResponse.json(
+            {
+              error: 'Failed to send invitation. User is already a part of the organization.',
+            },
+            { status: 400 }
+          )
+        }
+        if (pendingInvitationEmails.length > 0) {
+          return NextResponse.json(
+            {
+              error:
+                'Failed to send invitation. A pending invitation already exists for this email.',
+            },
+            { status: 400 }
+          )
+        }
+      }
+
       return NextResponse.json(
         {
-          error: 'All emails are already members or have pending invitations',
+          error: 'All emails are already members or have pending invitations.',
           details: {
-            existingMembers: processedEmails.filter((email: string) =>
-              existingEmails.includes(email)
-            ),
-            pendingInvitations: processedEmails.filter((email: string) =>
-              pendingEmails.includes(email)
-            ),
+            existingMembers: existingMembersEmails,
+            pendingInvitations: pendingInvitationEmails,
           },
         },
         { status: 400 }
@@ -339,7 +369,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           organizationEntry[0]?.name || 'organization',
           role,
           workspaceInvitationsWithNames,
-          `${env.NEXT_PUBLIC_APP_URL}/invite/${orgInvitation.id}`
+          `${getBaseUrl()}/invite/${orgInvitation.id}`
         )
 
         emailResult = await sendEmail({
@@ -352,8 +382,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         const emailHtml = await renderInvitationEmail(
           inviter[0]?.name || 'Someone',
           organizationEntry[0]?.name || 'organization',
-          `${env.NEXT_PUBLIC_APP_URL}/invite/${orgInvitation.id}`,
-          email
+          `${getBaseUrl()}/invite/${orgInvitation.id}`
         )
 
         emailResult = await sendEmail({
@@ -404,6 +433,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     })
   } catch (error) {
+    if (error instanceof InvitationsNotAllowedError) {
+      return NextResponse.json({ error: error.message }, { status: 403 })
+    }
+
     logger.error('Failed to create organization invitations', {
       organizationId: (await params).id,
       error,
@@ -463,7 +496,7 @@ export async function DELETE(
         and(
           eq(invitation.id, invitationId),
           eq(invitation.organizationId, organizationId),
-          eq(invitation.status, 'pending')
+          or(eq(invitation.status, 'pending'), eq(invitation.status, 'rejected'))
         )
       )
       .returning()

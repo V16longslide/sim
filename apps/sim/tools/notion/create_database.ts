@@ -1,4 +1,5 @@
 import type { NotionCreateDatabaseParams, NotionResponse } from '@/tools/notion/types'
+import { DATABASE_OUTPUT_PROPERTIES } from '@/tools/notion/types'
 import type { ToolConfig } from '@/tools/types'
 
 export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, NotionResponse> = {
@@ -10,7 +11,6 @@ export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, No
   oauth: {
     required: true,
     provider: 'notion',
-    additionalScopes: ['workspace.content', 'page.write'],
   },
 
   params: {
@@ -33,7 +33,7 @@ export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, No
       description: 'Title for the new database',
     },
     properties: {
-      type: 'string',
+      type: 'json',
       required: false,
       visibility: 'user-or-llm',
       description:
@@ -56,36 +56,16 @@ export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, No
       }
     },
     body: (params: NotionCreateDatabaseParams) => {
-      let parsedProperties
-
-      // Handle properties - use provided JSON or default to Name property
-      if (params.properties?.trim()) {
-        try {
-          parsedProperties = JSON.parse(params.properties)
-        } catch (error) {
-          throw new Error(
-            `Invalid properties JSON: ${error instanceof Error ? error.message : String(error)}`
-          )
-        }
-      } else {
-        // Default properties with a Name column
-        parsedProperties = {
-          Name: {
-            title: {},
-          },
-        }
-      }
-
-      // Format parent ID
-      const formattedParentId = params.parentId.replace(
-        /(.{8})(.{4})(.{4})(.{4})(.{12})/,
-        '$1-$2-$3-$4-$5'
-      )
+      // Use provided properties or default to Name property
+      const properties =
+        params.properties && Object.keys(params.properties).length > 0
+          ? params.properties
+          : { Name: { title: {} } }
 
       const body = {
         parent: {
           type: 'page_id',
-          page_id: formattedParentId,
+          page_id: params.parentId,
         },
         title: [
           {
@@ -95,7 +75,7 @@ export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, No
             },
           },
         ],
-        properties: parsedProperties,
+        properties,
       }
 
       return body
@@ -148,6 +128,62 @@ export const notionCreateDatabaseTool: ToolConfig<NotionCreateDatabaseParams, No
       type: 'object',
       description:
         'Database metadata including ID, title, URL, creation time, and properties schema',
+      properties: {
+        id: DATABASE_OUTPUT_PROPERTIES.id,
+        title: { type: 'string', description: 'Database title' },
+        url: DATABASE_OUTPUT_PROPERTIES.url,
+        createdTime: DATABASE_OUTPUT_PROPERTIES.created_time,
+        properties: DATABASE_OUTPUT_PROPERTIES.properties,
+      },
     },
+  },
+}
+
+// V2 Tool with API-aligned outputs
+interface NotionCreateDatabaseV2Response {
+  success: boolean
+  output: {
+    id: string
+    title: string
+    url: string
+    created_time: string
+    properties: Record<string, any>
+  }
+}
+
+export const notionCreateDatabaseV2Tool: ToolConfig<
+  NotionCreateDatabaseParams,
+  NotionCreateDatabaseV2Response
+> = {
+  id: 'notion_create_database_v2',
+  name: 'Create Notion Database',
+  description: 'Create a new database in Notion with custom properties',
+  version: '2.0.0',
+  oauth: notionCreateDatabaseTool.oauth,
+  params: notionCreateDatabaseTool.params,
+  request: notionCreateDatabaseTool.request,
+
+  transformResponse: async (response: Response) => {
+    const data = await response.json()
+    const title = data.title?.map((t: any) => t.plain_text || '').join('') || 'Untitled Database'
+
+    return {
+      success: true,
+      output: {
+        id: data.id,
+        title,
+        url: data.url,
+        created_time: data.created_time,
+        properties: data.properties || {},
+      },
+    }
+  },
+
+  outputs: {
+    id: DATABASE_OUTPUT_PROPERTIES.id,
+    title: { type: 'string', description: 'Database title' },
+    url: DATABASE_OUTPUT_PROPERTIES.url,
+    created_time: DATABASE_OUTPUT_PROPERTIES.created_time,
+    properties: DATABASE_OUTPUT_PROPERTIES.properties,
   },
 }

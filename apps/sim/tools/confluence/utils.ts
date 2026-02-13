@@ -9,7 +9,6 @@ export async function getConfluenceCloudId(domain: string, accessToken: string):
 
   const resources = await response.json()
 
-  // If we have resources, find the matching one
   if (Array.isArray(resources) && resources.length > 0) {
     const normalizedInput = `https://${domain}`.toLowerCase()
     const matchedResource = resources.find((r) => r.url.toLowerCase() === normalizedInput)
@@ -19,8 +18,6 @@ export async function getConfluenceCloudId(domain: string, accessToken: string):
     }
   }
 
-  // If we couldn't find a match, return the first resource's ID
-  // This is a fallback in case the URL matching fails
   if (Array.isArray(resources) && resources.length > 0) {
     return resources[0].id
   }
@@ -28,32 +25,60 @@ export async function getConfluenceCloudId(domain: string, accessToken: string):
   throw new Error('No Confluence resources found')
 }
 
-export function transformPageData(data: any) {
-  // Get content from wherever we can find it
-  const content =
-    data.body?.view?.value ||
-    data.body?.storage?.value ||
-    data.body?.atlas_doc_format?.value ||
-    data.content ||
-    data.description ||
-    `Content for page ${data.title || 'Unknown'}`
+function decodeHtmlEntities(text: string): string {
+  let decoded = text
+  let previous: string
 
-  const cleanContent = content
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
+  do {
+    previous = decoded
+    decoded = decoded
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+    decoded = decoded.replace(/&amp;/g, '&')
+  } while (decoded !== previous)
+
+  return decoded
+}
+
+function stripHtmlTags(html: string): string {
+  let text = html
+  let previous: string
+
+  do {
+    previous = text
+    text = text.replace(/<[^>]*>/g, '')
+    text = text.replace(/[<>]/g, '')
+  } while (text !== previous)
+
+  return text.trim()
+}
+
+export function transformPageData(data: any) {
+  const rawContent =
+    data.body?.storage?.value || data.body?.view?.value || data.body?.atlas_doc_format?.value || ''
+
+  let cleanContent = stripHtmlTags(rawContent)
+  cleanContent = decodeHtmlEntities(cleanContent)
+  cleanContent = cleanContent.replace(/\s+/g, ' ').trim()
 
   return {
     success: true,
     output: {
       ts: new Date().toISOString(),
-      pageId: data.id || '',
+      pageId: data.id ?? '',
+      title: data.title ?? '',
       content: cleanContent,
-      title: data.title || '',
+      status: data.status ?? null,
+      spaceId: data.spaceId ?? null,
+      parentId: data.parentId ?? null,
+      authorId: data.authorId ?? null,
+      createdAt: data.createdAt ?? null,
+      url: data._links?.webui ?? null,
+      body: data.body ?? null,
+      version: data.version ?? null,
     },
   }
 }

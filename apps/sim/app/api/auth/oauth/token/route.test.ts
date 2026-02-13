@@ -3,22 +3,18 @@
  *
  * @vitest-environment node
  */
+import { createMockLogger, createMockRequest } from '@sim/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMockRequest } from '@/app/api/__test-utils__/utils'
 
 describe('OAuth Token API Routes', () => {
   const mockGetUserId = vi.fn()
   const mockGetCredential = vi.fn()
   const mockRefreshTokenIfNeeded = vi.fn()
+  const mockGetOAuthToken = vi.fn()
   const mockAuthorizeCredentialUse = vi.fn()
-  const mockCheckHybridAuth = vi.fn()
+  const mockCheckSessionOrInternalAuth = vi.fn()
 
-  const mockLogger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }
+  const mockLogger = createMockLogger()
 
   const mockUUID = 'mock-uuid-12345678-90ab-cdef-1234-567890abcdef'
   const mockRequestId = mockUUID.slice(0, 8)
@@ -34,9 +30,10 @@ describe('OAuth Token API Routes', () => {
       getUserId: mockGetUserId,
       getCredential: mockGetCredential,
       refreshTokenIfNeeded: mockRefreshTokenIfNeeded,
+      getOAuthToken: mockGetOAuthToken,
     }))
 
-    vi.doMock('@/lib/logs/console/logger', () => ({
+    vi.doMock('@sim/logger', () => ({
       createLogger: vi.fn().mockReturnValue(mockLogger),
     }))
 
@@ -45,7 +42,7 @@ describe('OAuth Token API Routes', () => {
     }))
 
     vi.doMock('@/lib/auth/hybrid', () => ({
-      checkHybridAuth: mockCheckHybridAuth,
+      checkSessionOrInternalAuth: mockCheckSessionOrInternalAuth,
     }))
   })
 
@@ -143,7 +140,10 @@ describe('OAuth Token API Routes', () => {
       const data = await response.json()
 
       expect(response.status).toBe(400)
-      expect(data).toHaveProperty('error', 'Credential ID is required')
+      expect(data).toHaveProperty(
+        'error',
+        'Either credentialId or (credentialAccountUserId + providerId) is required'
+      )
       expect(mockLogger.warn).toHaveBeenCalled()
     })
 
@@ -200,7 +200,7 @@ describe('OAuth Token API Routes', () => {
       const response = await POST(req)
       const data = await response.json()
 
-      expect(response.status).toBe(401)
+      expect(response.status).toBe(404)
       expect(data).toHaveProperty('error')
     })
 
@@ -232,6 +232,118 @@ describe('OAuth Token API Routes', () => {
       expect(response.status).toBe(401)
       expect(data).toHaveProperty('error', 'Failed to refresh access token')
     })
+
+    describe('credentialAccountUserId + providerId path', () => {
+      it('should reject unauthenticated requests', async () => {
+        mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
+          success: false,
+          error: 'Authentication required',
+        })
+
+        const req = createMockRequest('POST', {
+          credentialAccountUserId: 'target-user-id',
+          providerId: 'google',
+        })
+
+        const { POST } = await import('@/app/api/auth/oauth/token/route')
+
+        const response = await POST(req)
+        const data = await response.json()
+
+        expect(response.status).toBe(401)
+        expect(data).toHaveProperty('error', 'User not authenticated')
+        expect(mockGetOAuthToken).not.toHaveBeenCalled()
+      })
+
+      it('should reject internal JWT authentication', async () => {
+        mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
+          success: true,
+          authType: 'internal_jwt',
+          userId: 'test-user-id',
+        })
+
+        const req = createMockRequest('POST', {
+          credentialAccountUserId: 'test-user-id',
+          providerId: 'google',
+        })
+
+        const { POST } = await import('@/app/api/auth/oauth/token/route')
+
+        const response = await POST(req)
+        const data = await response.json()
+
+        expect(response.status).toBe(401)
+        expect(data).toHaveProperty('error', 'User not authenticated')
+        expect(mockGetOAuthToken).not.toHaveBeenCalled()
+      })
+
+      it('should reject requests for other users credentials', async () => {
+        mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
+          success: true,
+          authType: 'session',
+          userId: 'attacker-user-id',
+        })
+
+        const req = createMockRequest('POST', {
+          credentialAccountUserId: 'victim-user-id',
+          providerId: 'google',
+        })
+
+        const { POST } = await import('@/app/api/auth/oauth/token/route')
+
+        const response = await POST(req)
+        const data = await response.json()
+
+        expect(response.status).toBe(403)
+        expect(data).toHaveProperty('error', 'Unauthorized')
+        expect(mockGetOAuthToken).not.toHaveBeenCalled()
+      })
+
+      it('should allow session-authenticated users to access their own credentials', async () => {
+        mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
+          success: true,
+          authType: 'session',
+          userId: 'test-user-id',
+        })
+        mockGetOAuthToken.mockResolvedValueOnce('valid-access-token')
+
+        const req = createMockRequest('POST', {
+          credentialAccountUserId: 'test-user-id',
+          providerId: 'google',
+        })
+
+        const { POST } = await import('@/app/api/auth/oauth/token/route')
+
+        const response = await POST(req)
+        const data = await response.json()
+
+        expect(response.status).toBe(200)
+        expect(data).toHaveProperty('accessToken', 'valid-access-token')
+        expect(mockGetOAuthToken).toHaveBeenCalledWith('test-user-id', 'google')
+      })
+
+      it('should return 404 when credential not found for user', async () => {
+        mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
+          success: true,
+          authType: 'session',
+          userId: 'test-user-id',
+        })
+        mockGetOAuthToken.mockResolvedValueOnce(null)
+
+        const req = createMockRequest('POST', {
+          credentialAccountUserId: 'test-user-id',
+          providerId: 'nonexistent-provider',
+        })
+
+        const { POST } = await import('@/app/api/auth/oauth/token/route')
+
+        const response = await POST(req)
+        const data = await response.json()
+
+        expect(response.status).toBe(404)
+        expect(data.error).toContain('No credential found')
+      })
+    })
   })
 
   /**
@@ -239,7 +351,7 @@ describe('OAuth Token API Routes', () => {
    */
   describe('GET handler', () => {
     it('should return access token successfully', async () => {
-      mockCheckHybridAuth.mockResolvedValueOnce({
+      mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
         success: true,
         authType: 'session',
         userId: 'test-user-id',
@@ -268,7 +380,7 @@ describe('OAuth Token API Routes', () => {
       expect(response.status).toBe(200)
       expect(data).toHaveProperty('accessToken', 'fresh-token')
 
-      expect(mockCheckHybridAuth).toHaveBeenCalled()
+      expect(mockCheckSessionOrInternalAuth).toHaveBeenCalled()
       expect(mockGetCredential).toHaveBeenCalledWith(mockRequestId, 'credential-id', 'test-user-id')
       expect(mockRefreshTokenIfNeeded).toHaveBeenCalled()
     })
@@ -287,7 +399,7 @@ describe('OAuth Token API Routes', () => {
     })
 
     it('should handle authentication failure', async () => {
-      mockCheckHybridAuth.mockResolvedValueOnce({
+      mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
         success: false,
         error: 'Authentication required',
       })
@@ -306,7 +418,7 @@ describe('OAuth Token API Routes', () => {
     })
 
     it('should handle credential not found', async () => {
-      mockCheckHybridAuth.mockResolvedValueOnce({
+      mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
         success: true,
         authType: 'session',
         userId: 'test-user-id',
@@ -327,7 +439,7 @@ describe('OAuth Token API Routes', () => {
     })
 
     it('should handle missing access token', async () => {
-      mockCheckHybridAuth.mockResolvedValueOnce({
+      mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
         success: true,
         authType: 'session',
         userId: 'test-user-id',
@@ -353,7 +465,7 @@ describe('OAuth Token API Routes', () => {
     })
 
     it('should handle token refresh failure', async () => {
-      mockCheckHybridAuth.mockResolvedValueOnce({
+      mockCheckSessionOrInternalAuth.mockResolvedValueOnce({
         success: true,
         authType: 'session',
         userId: 'test-user-id',

@@ -1,12 +1,13 @@
 import { db } from '@sim/db'
-import { workflow, workflowBlocks, workspace } from '@sim/db/schema'
-import { eq } from 'drizzle-orm'
+import { permissions, workflow } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
+import { and, asc, eq, inArray, isNull, min } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getSession } from '@/lib/auth'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
-import { verifyWorkspaceMembership } from './utils'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { generateRequestId } from '@/lib/core/utils/request'
+import { getUserEntityPermissions, workspaceExists } from '@/lib/workspaces/permissions/utils'
+import { verifyWorkspaceMembership } from '@/app/api/workflows/utils'
 
 const logger = createLogger('WorkflowAPI')
 
@@ -16,32 +17,28 @@ const CreateWorkflowSchema = z.object({
   color: z.string().optional().default('#3972F6'),
   workspaceId: z.string().optional(),
   folderId: z.string().nullable().optional(),
+  sortOrder: z.number().int().optional(),
 })
 
 // GET /api/workflows - Get workflows for user (optionally filtered by workspaceId)
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const requestId = generateRequestId()
   const startTime = Date.now()
   const url = new URL(request.url)
   const workspaceId = url.searchParams.get('workspaceId')
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized workflow access attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    const userId = session.user.id
+    const userId = auth.userId
 
     if (workspaceId) {
-      const workspaceExists = await db
-        .select({ id: workspace.id })
-        .from(workspace)
-        .where(eq(workspace.id, workspaceId))
-        .then((rows) => rows.length > 0)
+      const wsExists = await workspaceExists(workspaceId)
 
-      if (!workspaceExists) {
+      if (!wsExists) {
         logger.warn(
           `[${requestId}] Attempt to fetch workflows for non-existent workspace: ${workspaceId}`
         )
@@ -66,10 +63,28 @@ export async function GET(request: Request) {
 
     let workflows
 
+    const orderByClause = [asc(workflow.sortOrder), asc(workflow.createdAt), asc(workflow.id)]
+
     if (workspaceId) {
-      workflows = await db.select().from(workflow).where(eq(workflow.workspaceId, workspaceId))
+      workflows = await db
+        .select()
+        .from(workflow)
+        .where(eq(workflow.workspaceId, workspaceId))
+        .orderBy(...orderByClause)
     } else {
-      workflows = await db.select().from(workflow).where(eq(workflow.userId, userId))
+      const workspacePermissionRows = await db
+        .select({ workspaceId: permissions.entityId })
+        .from(permissions)
+        .where(and(eq(permissions.userId, userId), eq(permissions.entityType, 'workspace')))
+      const workspaceIds = workspacePermissionRows.map((row) => row.workspaceId)
+      if (workspaceIds.length === 0) {
+        return NextResponse.json({ data: [] }, { status: 200 })
+      }
+      workflows = await db
+        .select()
+        .from(workflow)
+        .where(inArray(workflow.workspaceId, workspaceIds))
+        .orderBy(...orderByClause)
     }
 
     return NextResponse.json({ data: workflows }, { status: 200 })
@@ -83,143 +98,95 @@ export async function GET(request: Request) {
 // POST /api/workflows - Create a new workflow
 export async function POST(req: NextRequest) {
   const requestId = generateRequestId()
-  const session = await getSession()
-
-  if (!session?.user?.id) {
+  const auth = await checkSessionOrInternalAuth(req, { requireWorkflowId: false })
+  if (!auth.success || !auth.userId) {
     logger.warn(`[${requestId}] Unauthorized workflow creation attempt`)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  const userId = auth.userId
 
   try {
     const body = await req.json()
-    const { name, description, color, workspaceId, folderId } = CreateWorkflowSchema.parse(body)
+    const {
+      name,
+      description,
+      color,
+      workspaceId,
+      folderId,
+      sortOrder: providedSortOrder,
+    } = CreateWorkflowSchema.parse(body)
+
+    if (!workspaceId) {
+      logger.warn(`[${requestId}] Workflow creation blocked: missing workspaceId`)
+      return NextResponse.json(
+        {
+          error:
+            'workspaceId is required. Personal workflows are deprecated and cannot be created.',
+        },
+        { status: 400 }
+      )
+    }
+
+    const workspacePermission = await getUserEntityPermissions(userId, 'workspace', workspaceId)
+
+    if (!workspacePermission || workspacePermission === 'read') {
+      logger.warn(
+        `[${requestId}] User ${userId} attempted to create workflow in workspace ${workspaceId} without write permissions`
+      )
+      return NextResponse.json(
+        { error: 'Write or Admin access required to create workflows in this workspace' },
+        { status: 403 }
+      )
+    }
 
     const workflowId = crypto.randomUUID()
-    const starterId = crypto.randomUUID()
     const now = new Date()
 
-    logger.info(`[${requestId}] Creating workflow ${workflowId} for user ${session.user.id}`)
+    logger.info(`[${requestId}] Creating workflow ${workflowId} for user ${userId}`)
 
-    await db.transaction(async (tx) => {
-      await tx.insert(workflow).values({
-        id: workflowId,
-        userId: session.user.id,
-        workspaceId: workspaceId || null,
-        folderId: folderId || null,
-        name,
-        description,
-        color,
-        lastSynced: now,
-        createdAt: now,
-        updatedAt: now,
-        isDeployed: false,
-        collaborators: [],
-        runCount: 0,
-        variables: {},
-        isPublished: false,
-        marketplaceData: null,
+    import('@/lib/core/telemetry')
+      .then(({ PlatformEvents }) => {
+        PlatformEvents.workflowCreated({
+          workflowId,
+          name,
+          workspaceId: workspaceId || undefined,
+          folderId: folderId || undefined,
+        })
+      })
+      .catch(() => {
+        // Silently fail
       })
 
-      await tx.insert(workflowBlocks).values({
-        id: starterId,
-        workflowId: workflowId,
-        type: 'starter',
-        name: 'Start',
-        positionX: '100',
-        positionY: '100',
-        enabled: true,
-        horizontalHandles: true,
-        isWide: false,
-        advancedMode: false,
-        triggerMode: false,
-        height: '95',
-        subBlocks: {
-          startWorkflow: {
-            id: 'startWorkflow',
-            type: 'dropdown',
-            value: 'manual',
-          },
-          webhookPath: {
-            id: 'webhookPath',
-            type: 'short-input',
-            value: '',
-          },
-          webhookSecret: {
-            id: 'webhookSecret',
-            type: 'short-input',
-            value: '',
-          },
-          scheduleType: {
-            id: 'scheduleType',
-            type: 'dropdown',
-            value: 'daily',
-          },
-          minutesInterval: {
-            id: 'minutesInterval',
-            type: 'short-input',
-            value: '',
-          },
-          minutesStartingAt: {
-            id: 'minutesStartingAt',
-            type: 'short-input',
-            value: '',
-          },
-          hourlyMinute: {
-            id: 'hourlyMinute',
-            type: 'short-input',
-            value: '',
-          },
-          dailyTime: {
-            id: 'dailyTime',
-            type: 'short-input',
-            value: '',
-          },
-          weeklyDay: {
-            id: 'weeklyDay',
-            type: 'dropdown',
-            value: 'MON',
-          },
-          weeklyDayTime: {
-            id: 'weeklyDayTime',
-            type: 'short-input',
-            value: '',
-          },
-          monthlyDay: {
-            id: 'monthlyDay',
-            type: 'short-input',
-            value: '',
-          },
-          monthlyTime: {
-            id: 'monthlyTime',
-            type: 'short-input',
-            value: '',
-          },
-          cronExpression: {
-            id: 'cronExpression',
-            type: 'short-input',
-            value: '',
-          },
-          timezone: {
-            id: 'timezone',
-            type: 'dropdown',
-            value: 'UTC',
-          },
-        },
-        outputs: {
-          response: {
-            type: {
-              input: 'any',
-            },
-          },
-        },
-        createdAt: now,
-        updatedAt: now,
-      })
+    let sortOrder: number
+    if (providedSortOrder !== undefined) {
+      sortOrder = providedSortOrder
+    } else {
+      const folderCondition = folderId ? eq(workflow.folderId, folderId) : isNull(workflow.folderId)
+      const [minResult] = await db
+        .select({ minOrder: min(workflow.sortOrder) })
+        .from(workflow)
+        .where(and(eq(workflow.workspaceId, workspaceId), folderCondition))
+      sortOrder = (minResult?.minOrder ?? 1) - 1
+    }
 
-      logger.info(
-        `[${requestId}] Successfully created workflow ${workflowId} with start block in workflow_blocks table`
-      )
+    await db.insert(workflow).values({
+      id: workflowId,
+      userId,
+      workspaceId,
+      folderId: folderId || null,
+      sortOrder,
+      name,
+      description,
+      color,
+      lastSynced: now,
+      createdAt: now,
+      updatedAt: now,
+      isDeployed: false,
+      runCount: 0,
+      variables: {},
     })
+
+    logger.info(`[${requestId}] Successfully created empty workflow ${workflowId}`)
 
     return NextResponse.json({
       id: workflowId,
@@ -228,6 +195,7 @@ export async function POST(req: NextRequest) {
       color,
       workspaceId,
       folderId,
+      sortOrder,
       createdAt: now,
       updatedAt: now,
     })

@@ -21,14 +21,53 @@ export const findSimilarLinksTool: ToolConfig<
     numResults: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Number of similar links to return (default: 10, max: 25)',
+      visibility: 'user-or-llm',
+      description: 'Number of similar links to return (e.g., 5, 10, 25). Default: 10, max: 25',
     },
     text: {
       type: 'boolean',
       required: false,
       visibility: 'user-or-llm',
       description: 'Whether to include the full text of the similar pages',
+    },
+    includeDomains: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Comma-separated list of domains to include in results (e.g., "github.com, stackoverflow.com")',
+    },
+    excludeDomains: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Comma-separated list of domains to exclude from results (e.g., "reddit.com, pinterest.com")',
+    },
+    excludeSourceDomain: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-only',
+      description: 'Exclude the source domain from results (default: false)',
+    },
+    highlights: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-only',
+      description: 'Include highlighted snippets in results (default: false)',
+    },
+    summary: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-only',
+      description: 'Include AI-generated summaries in results (default: false)',
+    },
+    livecrawl: {
+      type: 'string',
+      required: false,
+      visibility: 'user-only',
+      description:
+        'Live crawling mode: never (default), fallback, always, or preferred (always try livecrawl, fall back to cache if fails)',
     },
     apiKey: {
       type: 'string',
@@ -51,13 +90,36 @@ export const findSimilarLinksTool: ToolConfig<
       }
 
       // Add optional parameters if provided
-      if (params.numResults) body.numResults = params.numResults
+      if (params.numResults) body.numResults = Number(params.numResults)
 
-      // Add contents.text parameter if text is true
-      if (params.text) {
-        body.contents = {
-          text: true,
-        }
+      // Domain filtering
+      if (params.includeDomains) {
+        body.includeDomains = params.includeDomains
+          .split(',')
+          .map((d: string) => d.trim())
+          .filter((d: string) => d.length > 0)
+      }
+      if (params.excludeDomains) {
+        body.excludeDomains = params.excludeDomains
+          .split(',')
+          .map((d: string) => d.trim())
+          .filter((d: string) => d.length > 0)
+      }
+      if (params.excludeSourceDomain !== undefined) {
+        body.excludeSourceDomain = params.excludeSourceDomain
+      }
+
+      // Content options - build contents object
+      const contents: Record<string, any> = {}
+      if (params.text !== undefined) contents.text = params.text
+      if (params.highlights !== undefined) contents.highlights = params.highlights
+      if (params.summary !== undefined) contents.summary = params.summary
+
+      // Live crawl mode should be inside contents
+      if (params.livecrawl) contents.livecrawl = params.livecrawl
+
+      if (Object.keys(contents).length > 0) {
+        body.contents = contents
       }
 
       return body
@@ -74,6 +136,8 @@ export const findSimilarLinksTool: ToolConfig<
           title: result.title || '',
           url: result.url,
           text: result.text || '',
+          summary: result.summary,
+          highlights: result.highlights,
           score: result.score || 0,
         })),
       },

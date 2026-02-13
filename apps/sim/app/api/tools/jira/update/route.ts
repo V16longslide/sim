@@ -1,60 +1,96 @@
-import { NextResponse } from 'next/server'
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { type NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { validateJiraCloudId, validateJiraIssueKey } from '@/lib/core/security/input-validation'
 import { getJiraCloudId } from '@/tools/jira/utils'
 
 export const dynamic = 'force-dynamic'
 
 const logger = createLogger('JiraUpdateAPI')
 
-export async function PUT(request: Request) {
+const jiraUpdateSchema = z.object({
+  domain: z.string().min(1, 'Domain is required'),
+  accessToken: z.string().min(1, 'Access token is required'),
+  issueKey: z.string().min(1, 'Issue key is required'),
+  summary: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  priority: z.string().optional(),
+  assignee: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  components: z.array(z.string()).optional(),
+  duedate: z.string().optional(),
+  fixVersions: z.array(z.string()).optional(),
+  environment: z.string().optional(),
+  customFieldId: z.string().optional(),
+  customFieldValue: z.string().optional(),
+  notifyUsers: z.boolean().optional(),
+  cloudId: z.string().optional(),
+})
+
+export async function PUT(request: NextRequest) {
   try {
+    const auth = await checkSessionOrInternalAuth(request)
+    if (!auth.success || !auth.userId) {
+      return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const validation = jiraUpdateSchema.safeParse(body)
+
+    if (!validation.success) {
+      const firstError = validation.error.errors[0]
+      logger.error('Validation error:', firstError)
+      return NextResponse.json({ error: firstError.message }, { status: 400 })
+    }
+
     const {
       domain,
       accessToken,
       issueKey,
       summary,
-      title, // Support both summary and title for backwards compatibility
+      title,
       description,
-      status,
       priority,
       assignee,
+      labels,
+      components,
+      duedate,
+      fixVersions,
+      environment,
+      customFieldId,
+      customFieldValue,
+      notifyUsers,
       cloudId: providedCloudId,
-    } = await request.json()
+    } = validation.data
 
-    // Validate required parameters
-    if (!domain) {
-      logger.error('Missing domain in request')
-      return NextResponse.json({ error: 'Domain is required' }, { status: 400 })
-    }
-
-    if (!accessToken) {
-      logger.error('Missing access token in request')
-      return NextResponse.json({ error: 'Access token is required' }, { status: 400 })
-    }
-
-    if (!issueKey) {
-      logger.error('Missing issue key in request')
-      return NextResponse.json({ error: 'Issue key is required' }, { status: 400 })
-    }
-
-    // Use provided cloudId or fetch it if not provided
     const cloudId = providedCloudId || (await getJiraCloudId(domain, accessToken))
     logger.info('Using cloud ID:', cloudId)
 
-    // Build the URL using cloudId for Jira API
-    const url = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${issueKey}`
+    const cloudIdValidation = validateJiraCloudId(cloudId, 'cloudId')
+    if (!cloudIdValidation.isValid) {
+      return NextResponse.json({ error: cloudIdValidation.error }, { status: 400 })
+    }
+
+    const issueKeyValidation = validateJiraIssueKey(issueKey, 'issueKey')
+    if (!issueKeyValidation.isValid) {
+      return NextResponse.json({ error: issueKeyValidation.error }, { status: 400 })
+    }
+
+    const notifyParam = notifyUsers === false ? '?notifyUsers=false' : ''
+    const url = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${issueKey}${notifyParam}`
 
     logger.info('Updating Jira issue at:', url)
 
-    // Map the summary from either summary or title field
     const summaryValue = summary || title
     const fields: Record<string, any> = {}
 
-    if (summaryValue) {
+    if (summaryValue !== undefined && summaryValue !== null && summaryValue !== '') {
       fields.summary = summaryValue
     }
 
-    if (description) {
+    if (description !== undefined && description !== null && description !== '') {
       fields.description = {
         type: 'doc',
         version: 1,
@@ -72,27 +108,67 @@ export async function PUT(request: Request) {
       }
     }
 
-    if (status) {
-      fields.status = {
-        name: status,
-      }
+    if (priority !== undefined && priority !== null && priority !== '') {
+      const isNumericId = /^\d+$/.test(priority)
+      fields.priority = isNumericId ? { id: priority } : { name: priority }
     }
 
-    if (priority) {
-      fields.priority = {
-        name: priority,
-      }
-    }
-
-    if (assignee) {
+    if (assignee !== undefined && assignee !== null && assignee !== '') {
       fields.assignee = {
-        id: assignee,
+        accountId: assignee,
       }
     }
 
-    const body = { fields }
+    if (labels !== undefined && labels !== null && labels.length > 0) {
+      fields.labels = labels
+    }
 
-    // Make the request to Jira API
+    if (components !== undefined && components !== null && components.length > 0) {
+      fields.components = components.map((name) => ({ name }))
+    }
+
+    if (duedate !== undefined && duedate !== null && duedate !== '') {
+      fields.duedate = duedate
+    }
+
+    if (fixVersions !== undefined && fixVersions !== null && fixVersions.length > 0) {
+      fields.fixVersions = fixVersions.map((name) => ({ name }))
+    }
+
+    if (environment !== undefined && environment !== null && environment !== '') {
+      fields.environment = {
+        type: 'doc',
+        version: 1,
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: environment,
+              },
+            ],
+          },
+        ],
+      }
+    }
+
+    if (
+      customFieldId !== undefined &&
+      customFieldId !== null &&
+      customFieldId !== '' &&
+      customFieldValue !== undefined &&
+      customFieldValue !== null &&
+      customFieldValue !== ''
+    ) {
+      const fieldId = customFieldId.startsWith('customfield_')
+        ? customFieldId
+        : `customfield_${customFieldId}`
+      fields[fieldId] = customFieldValue
+    }
+
+    const requestBody = { fields }
+
     const response = await fetch(url, {
       method: 'PUT',
       headers: {
@@ -100,7 +176,7 @@ export async function PUT(request: Request) {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     })
 
     if (!response.ok) {
@@ -117,7 +193,6 @@ export async function PUT(request: Request) {
       )
     }
 
-    // Note: Jira update API typically returns 204 No Content on success
     const responseData = response.status === 204 ? {} : await response.json()
     logger.info('Successfully updated Jira issue:', issueKey)
 

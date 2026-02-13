@@ -1,4 +1,5 @@
 import type { NotionQueryDatabaseParams, NotionResponse } from '@/tools/notion/types'
+import { DATABASE_QUERY_RESULTS_OUTPUT, PAGINATION_OUTPUT_PROPERTIES } from '@/tools/notion/types'
 import { extractTitle, formatPropertyValue } from '@/tools/notion/utils'
 import type { ToolConfig } from '@/tools/types'
 
@@ -11,7 +12,6 @@ export const notionQueryDatabaseTool: ToolConfig<NotionQueryDatabaseParams, Noti
   oauth: {
     required: true,
     provider: 'notion',
-    additionalScopes: ['workspace.content', 'database.read'],
   },
 
   params: {
@@ -24,8 +24,8 @@ export const notionQueryDatabaseTool: ToolConfig<NotionQueryDatabaseParams, Noti
     databaseId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the database to query',
+      visibility: 'user-or-llm',
+      description: 'The UUID of the Notion database to query',
     },
     filter: {
       type: 'string',
@@ -42,18 +42,14 @@ export const notionQueryDatabaseTool: ToolConfig<NotionQueryDatabaseParams, Noti
     pageSize: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
+      visibility: 'user-or-llm',
       description: 'Number of results to return (default: 100, max: 100)',
     },
   },
 
   request: {
     url: (params: NotionQueryDatabaseParams) => {
-      const formattedId = params.databaseId.replace(
-        /(.{8})(.{4})(.{4})(.{4})(.{12})/,
-        '$1-$2-$3-$4-$5'
-      )
-      return `https://api.notion.com/v1/databases/${formattedId}/query`
+      return `https://api.notion.com/v1/databases/${params.databaseId}/query`
     },
     method: 'POST',
     headers: (params: NotionQueryDatabaseParams) => {
@@ -94,7 +90,7 @@ export const notionQueryDatabaseTool: ToolConfig<NotionQueryDatabaseParams, Noti
 
       // Add page size if provided
       if (params.pageSize) {
-        body.page_size = Math.min(params.pageSize, 100)
+        body.page_size = Math.min(Number(params.pageSize), 100)
       }
 
       return body
@@ -146,24 +142,56 @@ export const notionQueryDatabaseTool: ToolConfig<NotionQueryDatabaseParams, Noti
         'Query metadata including total results count, pagination info, and raw results array',
       properties: {
         totalResults: { type: 'number', description: 'Number of results returned' },
-        hasMore: { type: 'boolean', description: 'Whether more results are available' },
-        nextCursor: { type: 'string', description: 'Cursor for pagination', optional: true },
-        results: {
-          type: 'array',
-          description: 'Raw Notion page objects',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', description: 'Page ID' },
-              properties: { type: 'object', description: 'Page properties' },
-              created_time: { type: 'string', description: 'Creation timestamp' },
-              last_edited_time: { type: 'string', description: 'Last edit timestamp' },
-              url: { type: 'string', description: 'Page URL' },
-              archived: { type: 'boolean', description: 'Whether page is archived' },
-            },
-          },
-        },
+        hasMore: PAGINATION_OUTPUT_PROPERTIES.has_more,
+        nextCursor: PAGINATION_OUTPUT_PROPERTIES.next_cursor,
+        results: DATABASE_QUERY_RESULTS_OUTPUT,
       },
     },
+  },
+}
+
+// V2 Tool with API-aligned outputs
+interface NotionQueryDatabaseV2Response {
+  success: boolean
+  output: {
+    results: any[]
+    has_more: boolean
+    next_cursor: string | null
+    total_results: number
+  }
+}
+
+export const notionQueryDatabaseV2Tool: ToolConfig<
+  NotionQueryDatabaseParams,
+  NotionQueryDatabaseV2Response
+> = {
+  id: 'notion_query_database_v2',
+  name: 'Query Notion Database',
+  description: 'Query and filter Notion database entries with advanced filtering',
+  version: '2.0.0',
+  oauth: notionQueryDatabaseTool.oauth,
+  params: notionQueryDatabaseTool.params,
+  request: notionQueryDatabaseTool.request,
+
+  transformResponse: async (response: Response) => {
+    const data = await response.json()
+    const results = data.results || []
+
+    return {
+      success: true,
+      output: {
+        results,
+        has_more: data.has_more || false,
+        next_cursor: data.next_cursor || null,
+        total_results: results.length,
+      },
+    }
+  },
+
+  outputs: {
+    results: DATABASE_QUERY_RESULTS_OUTPUT,
+    has_more: PAGINATION_OUTPUT_PROPERTIES.has_more,
+    next_cursor: PAGINATION_OUTPUT_PROPERTIES.next_cursor,
+    total_results: { type: 'number', description: 'Number of results returned' },
   },
 }

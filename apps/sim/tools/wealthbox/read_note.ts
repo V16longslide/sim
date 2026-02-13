@@ -1,8 +1,5 @@
-import { createLogger } from '@/lib/logs/console/logger'
 import type { ToolConfig } from '@/tools/types'
 import type { WealthboxReadParams, WealthboxReadResponse } from '@/tools/wealthbox/types'
-
-const logger = createLogger('WealthboxReadNote')
 
 export const wealthboxReadNoteTool: ToolConfig<WealthboxReadParams, WealthboxReadResponse> = {
   id: 'wealthbox_read_note',
@@ -20,8 +17,8 @@ export const wealthboxReadNoteTool: ToolConfig<WealthboxReadParams, WealthboxRea
     noteId: {
       type: 'string',
       required: false,
-      description: 'The ID of the note to read',
-      visibility: 'user-only',
+      description: 'The ID of the note to read (e.g., "11111")',
+      visibility: 'user-or-llm',
     },
   },
 
@@ -47,7 +44,7 @@ export const wealthboxReadNoteTool: ToolConfig<WealthboxReadParams, WealthboxRea
     },
   },
 
-  transformResponse: async (response: Response, params?: WealthboxReadParams) => {
+  transformResponse: async (response: Response) => {
     const data = await response.json()
 
     // Format note information into readable content
@@ -86,8 +83,8 @@ export const wealthboxReadNoteTool: ToolConfig<WealthboxReadParams, WealthboxRea
         content,
         note,
         metadata: {
-          operation: 'read_note' as const,
-          noteId: params?.noteId || note.id?.toString() || '',
+          itemId: note.id?.toString() ?? null,
+          noteId: note.id?.toString() ?? null,
           itemType: 'note' as const,
         },
       },
@@ -106,8 +103,8 @@ export const wealthboxReadNoteTool: ToolConfig<WealthboxReadParams, WealthboxRea
           type: 'object',
           description: 'Operation metadata',
           properties: {
-            operation: { type: 'string', description: 'The operation performed' },
-            noteId: { type: 'string', description: 'ID of the note' },
+            itemId: { type: 'string', description: 'ID of the note', optional: true },
+            noteId: { type: 'string', description: 'ID of the note', optional: true },
             itemType: { type: 'string', description: 'Type of item (note)' },
           },
         },

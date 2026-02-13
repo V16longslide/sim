@@ -1,41 +1,81 @@
-import { createLogger } from '@/lib/logs/console/logger'
-import { getBaseUrl } from '@/lib/urls/utils'
-import { useCustomToolsStore } from '@/stores/custom-tools/store'
-import { useEnvironmentStore } from '@/stores/settings/environment/store'
+import { createLogger } from '@sim/logger'
+import { getMaxExecutionTimeout } from '@/lib/core/execution-limits'
+import { getBaseUrl } from '@/lib/core/utils/urls'
+import { AGENT, isCustomTool } from '@/executor/constants'
+import { getCustomTool } from '@/hooks/queries/custom-tools'
+import { useEnvironmentStore } from '@/stores/settings/environment'
 import { tools } from '@/tools/registry'
-import type { TableRow, ToolConfig, ToolResponse } from '@/tools/types'
+import type { ToolConfig } from '@/tools/types'
 
 const logger = createLogger('ToolsUtils')
 
 /**
- * Transforms a table from the store format to a key-value object
- * @param table Array of table rows from the store
- * @returns Record of key-value pairs
+ * Strips version suffix (_v2, _v3, etc.) from a tool ID or name
+ * @example stripVersionSuffix('notion_search_v2') => 'notion_search'
+ * @example stripVersionSuffix('github_create_pr_v3') => 'github_create_pr'
  */
-export const transformTable = (table: TableRow[] | null): Record<string, any> => {
-  if (!table) return {}
-
-  return table.reduce(
-    (acc, row) => {
-      if (row.cells?.Key && row.cells?.Value !== undefined) {
-        // Extract the Value cell as is - it should already be properly resolved
-        // by the InputResolver based on variable type (number, string, boolean etc.)
-        const value = row.cells.Value
-
-        // Store the correctly typed value in the result object
-        acc[row.cells.Key] = value
-      }
-      return acc
-    },
-    {} as Record<string, any>
-  )
+export function stripVersionSuffix(name: string): string {
+  return name.replace(/_v\d+$/, '')
 }
 
-interface RequestParams {
+/**
+ * Filters a tools map to return only the latest version of each tool.
+ * If both `notion_search` and `notion_search_v2` exist, only `notion_search_v2` is returned.
+ * @param toolsMap Record of tool ID to ToolConfig
+ * @returns Filtered record containing only the latest version of each tool
+ */
+export function getLatestVersionTools(
+  toolsMap: Record<string, ToolConfig>
+): Record<string, ToolConfig> {
+  const latestTools: Record<string, ToolConfig> = {}
+  const baseNameToVersions: Record<string, { toolId: string; version: number }[]> = {}
+
+  for (const toolId of Object.keys(toolsMap)) {
+    const baseName = stripVersionSuffix(toolId)
+    const versionMatch = toolId.match(/_v(\d+)$/)
+    const version = versionMatch ? Number.parseInt(versionMatch[1], 10) : 1
+
+    if (!baseNameToVersions[baseName]) {
+      baseNameToVersions[baseName] = []
+    }
+    baseNameToVersions[baseName].push({ toolId, version })
+  }
+
+  for (const versions of Object.values(baseNameToVersions)) {
+    const latest = versions.reduce((prev, curr) => (curr.version > prev.version ? curr : prev))
+    latestTools[latest.toolId] = toolsMap[latest.toolId]
+  }
+
+  return latestTools
+}
+
+/**
+ * Resolves a tool name to its actual tool ID in the registry.
+ * Handles both stripped names (e.g., 'notion_search') and versioned names (e.g., 'notion_search_v2').
+ * @param toolName The tool name to resolve (may or may not have version suffix)
+ * @returns The actual tool ID in the registry, or the original name if not found
+ */
+export function resolveToolId(toolName: string): string {
+  if (tools[toolName]) {
+    return toolName
+  }
+
+  const latestTools = getLatestVersionTools(tools)
+  for (const toolId of Object.keys(latestTools)) {
+    if (stripVersionSuffix(toolId) === toolName) {
+      return toolId
+    }
+  }
+
+  return toolName
+}
+
+export interface RequestParams {
   url: string
   method: string
   headers: Record<string, string>
   body?: string
+  timeout?: number
 }
 
 /**
@@ -62,56 +102,36 @@ export function formatRequestParams(tool: ToolConfig, params: Record<string, any
   const isPreformattedContent =
     headers['Content-Type'] === 'application/x-ndjson' ||
     headers['Content-Type'] === 'application/x-www-form-urlencoded'
-  const body = hasBody
-    ? isPreformattedContent && typeof bodyResult === 'string'
-      ? bodyResult
-      : JSON.stringify(bodyResult)
-    : undefined
 
-  return { url, method, headers, body }
-}
-
-/**
- * Execute the actual request and transform the response
- */
-export async function executeRequest(
-  toolId: string,
-  tool: ToolConfig,
-  requestParams: RequestParams
-): Promise<ToolResponse> {
-  try {
-    const { url, method, headers, body } = requestParams
-
-    const externalResponse = await fetch(url, { method, headers, body })
-
-    if (!externalResponse.ok) {
-      let errorContent
-      try {
-        errorContent = await externalResponse.json()
-      } catch (_e) {
-        errorContent = { message: externalResponse.statusText }
+  let body: string | undefined
+  if (hasBody) {
+    if (isPreformattedContent) {
+      // Check if bodyResult is a string
+      if (typeof bodyResult === 'string') {
+        body = bodyResult
       }
-
-      const error = errorContent.message || `${toolId} API error: ${externalResponse.statusText}`
-      logger.error(`${toolId} error:`, { error })
-      throw new Error(error)
-    }
-
-    const transformResponse =
-      tool.transformResponse ||
-      (async (resp: Response) => ({
-        success: true,
-        output: await resp.json(),
-      }))
-
-    return await transformResponse(externalResponse)
-  } catch (error: any) {
-    return {
-      success: false,
-      output: {},
-      error: error.message || 'Unknown error',
+      // Check if bodyResult is an object with a 'body' property (Twilio pattern)
+      else if (bodyResult && typeof bodyResult === 'object' && 'body' in bodyResult) {
+        body = bodyResult.body
+      }
+      // Otherwise JSON stringify it
+      else {
+        body = JSON.stringify(bodyResult)
+      }
+    } else {
+      body = typeof bodyResult === 'string' ? bodyResult : JSON.stringify(bodyResult)
     }
   }
+
+  const MAX_TIMEOUT_MS = getMaxExecutionTimeout()
+  const rawTimeout = params.timeout
+  const timeout = rawTimeout != null ? Number(rawTimeout) : undefined
+  const validTimeout =
+    timeout != null && Number.isFinite(timeout) && timeout > 0
+      ? Math.min(timeout, MAX_TIMEOUT_MS)
+      : undefined
+
+  return { url, method, headers, body, timeout: validTimeout }
 }
 
 /**
@@ -157,7 +177,7 @@ export function validateRequiredParametersAfterMerge(
       const toolName = tool.name || toolId
       const friendlyParamName =
         parameterNameMap?.[paramName] || formatParameterNameForError(paramName)
-      throw new Error(`"${friendlyParamName}" is required for ${toolName}`)
+      throw new Error(`${friendlyParamName} is required for ${toolName}`)
     }
   }
 }
@@ -258,7 +278,8 @@ export function createCustomToolRequestBody(
       workflowVariables: workflowVariables, // Workflow variables for <variable.name> resolution
       blockData: blockData, // Runtime block outputs for <block.field> resolution
       blockNameMapping: blockNameMapping, // Block name to ID mapping
-      workflowId: workflowId, // Pass workflowId for server-side context
+      workflowId: params._context?.workflowId || workflowId, // Pass workflowId for server-side context
+      userId: params._context?.userId, // Pass userId for auth context
       isCustomTool: true, // Flag to indicate this is a custom tool execution
     }
   }
@@ -271,19 +292,12 @@ export function getTool(toolId: string): ToolConfig | undefined {
   if (builtInTool) return builtInTool
 
   // Check if it's a custom tool
-  if (toolId.startsWith('custom_') && typeof window !== 'undefined') {
+  if (isCustomTool(toolId) && typeof window !== 'undefined') {
     // Only try to use the sync version on the client
-    const customToolsStore = useCustomToolsStore.getState()
-    const identifier = toolId.replace('custom_', '')
+    const identifier = toolId.slice(AGENT.CUSTOM_TOOL_PREFIX.length)
 
-    // Try to find the tool directly by ID first
-    let customTool = customToolsStore.getTool(identifier)
-
-    // If not found by ID, try to find by title (for backward compatibility)
-    if (!customTool) {
-      const allTools = customToolsStore.getAllTools()
-      customTool = allTools.find((tool) => tool.title === identifier)
-    }
+    // Try to find the tool from query cache (extracts workspaceId from URL)
+    const customTool = getCustomTool(identifier)
 
     if (customTool) {
       return createToolConfig(customTool, toolId)
@@ -297,15 +311,16 @@ export function getTool(toolId: string): ToolConfig | undefined {
 // Get a tool by its ID asynchronously (supports server-side)
 export async function getToolAsync(
   toolId: string,
-  workflowId?: string
+  workflowId?: string,
+  userId?: string
 ): Promise<ToolConfig | undefined> {
   // Check for built-in tools
   const builtInTool = tools[toolId]
   if (builtInTool) return builtInTool
 
   // Check if it's a custom tool
-  if (toolId.startsWith('custom_')) {
-    return getCustomTool(toolId, workflowId)
+  if (isCustomTool(toolId)) {
+    return fetchCustomToolFromAPI(toolId, workflowId, userId)
   }
 
   return undefined
@@ -349,10 +364,11 @@ function createToolConfig(customTool: any, customToolId: string): ToolConfig {
   }
 }
 
-// Create a tool config from a custom tool definition
-async function getCustomTool(
+// Create a tool config from a custom tool definition by fetching from API
+async function fetchCustomToolFromAPI(
   customToolId: string,
-  workflowId?: string
+  workflowId?: string,
+  userId?: string
 ): Promise<ToolConfig | undefined> {
   const identifier = customToolId.replace('custom_', '')
 
@@ -360,12 +376,29 @@ async function getCustomTool(
     const baseUrl = getBaseUrl()
     const url = new URL('/api/tools/custom', baseUrl)
 
-    // Add workflowId as a query parameter if available
     if (workflowId) {
       url.searchParams.append('workflowId', workflowId)
     }
+    if (userId) {
+      url.searchParams.append('userId', userId)
+    }
 
-    const response = await fetch(url.toString())
+    // For server-side calls (during workflow execution), use internal JWT token
+    const headers: Record<string, string> = {}
+    if (typeof window === 'undefined') {
+      try {
+        const { generateInternalToken } = await import('@/lib/auth/internal')
+        const internalToken = await generateInternalToken()
+        headers.Authorization = `Bearer ${internalToken}`
+      } catch (error) {
+        logger.warn('Failed to generate internal token for custom tools fetch', { error })
+        // Continue without token - will fail auth and be reported upstream
+      }
+    }
+
+    const response = await fetch(url.toString(), {
+      headers,
+    })
 
     if (!response.ok) {
       logger.error(`Failed to fetch custom tools: ${response.statusText}`)

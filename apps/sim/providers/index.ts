@@ -1,21 +1,45 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { getApiKeyWithBYOK } from '@/lib/api-key/byok'
+import { getCostMultiplier } from '@/lib/core/config/feature-flags'
 import type { StreamingExecution } from '@/executor/types'
-import type { ProviderRequest, ProviderResponse } from '@/providers/types'
+import { getProviderExecutor } from '@/providers/registry'
+import type { ProviderId, ProviderRequest, ProviderResponse } from '@/providers/types'
 import {
   calculateCost,
   generateStructuredOutputInstructions,
-  getProvider,
   shouldBillModelUsage,
+  supportsReasoningEffort,
   supportsTemperature,
+  supportsThinking,
+  supportsVerbosity,
 } from '@/providers/utils'
 
 const logger = createLogger('Providers')
 
+/**
+ * Maximum number of iterations for tool call loops to prevent infinite loops.
+ * Used across all providers that support tool/function calling.
+ */
+export const MAX_TOOL_ITERATIONS = 20
+
 function sanitizeRequest(request: ProviderRequest): ProviderRequest {
   const sanitizedRequest = { ...request }
+  const model = sanitizedRequest.model
 
-  if (sanitizedRequest.model && !supportsTemperature(sanitizedRequest.model)) {
+  if (model && !supportsTemperature(model)) {
     sanitizedRequest.temperature = undefined
+  }
+
+  if (model && !supportsReasoningEffort(model)) {
+    sanitizedRequest.reasoningEffort = undefined
+  }
+
+  if (model && !supportsVerbosity(model)) {
+    sanitizedRequest.verbosity = undefined
+  }
+
+  if (model && !supportsThinking(model)) {
+    sanitizedRequest.thinkingLevel = undefined
   }
 
   return sanitizedRequest
@@ -33,7 +57,7 @@ export async function executeProviderRequest(
   providerId: string,
   request: ProviderRequest
 ): Promise<ProviderResponse | ReadableStream | StreamingExecution> {
-  const provider = getProvider(providerId)
+  const provider = await getProviderExecutor(providerId as ProviderId)
   if (!provider) {
     throw new Error(`Provider not found: ${providerId}`)
   }
@@ -41,9 +65,33 @@ export async function executeProviderRequest(
   if (!provider.executeRequest) {
     throw new Error(`Provider ${providerId} does not implement executeRequest`)
   }
-  const sanitizedRequest = sanitizeRequest(request)
 
-  // If responseFormat is provided, modify the system prompt to enforce structured output
+  let resolvedRequest = sanitizeRequest(request)
+  let isBYOK = false
+
+  if (request.workspaceId) {
+    try {
+      const result = await getApiKeyWithBYOK(
+        providerId,
+        request.model,
+        request.workspaceId,
+        request.apiKey
+      )
+      resolvedRequest = { ...resolvedRequest, apiKey: result.apiKey }
+      isBYOK = result.isBYOK
+    } catch (error) {
+      logger.error('Failed to resolve API key:', {
+        provider: providerId,
+        model: request.model,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  }
+
+  resolvedRequest.isBYOK = isBYOK
+  const sanitizedRequest = resolvedRequest
+
   if (sanitizedRequest.responseFormat) {
     if (
       typeof sanitizedRequest.responseFormat === 'string' &&
@@ -52,12 +100,10 @@ export async function executeProviderRequest(
       logger.info('Empty response format provided, ignoring it')
       sanitizedRequest.responseFormat = undefined
     } else {
-      // Generate structured output instructions
       const structuredOutputInstructions = generateStructuredOutputInstructions(
         sanitizedRequest.responseFormat
       )
 
-      // Only add additional instructions if they're not empty
       if (structuredOutputInstructions.trim()) {
         const originalPrompt = sanitizedRequest.systemPrompt || ''
         sanitizedRequest.systemPrompt =
@@ -68,10 +114,8 @@ export async function executeProviderRequest(
     }
   }
 
-  // Execute the request using the provider's implementation
   const response = await provider.executeRequest(sanitizedRequest)
 
-  // If we received a StreamingExecution or ReadableStream, just pass it through
   if (isStreamingExecution(response)) {
     logger.info('Provider returned StreamingExecution')
     return response
@@ -83,11 +127,20 @@ export async function executeProviderRequest(
   }
 
   if (response.tokens) {
-    const { prompt: promptTokens = 0, completion: completionTokens = 0 } = response.tokens
+    const { input: promptTokens = 0, output: completionTokens = 0 } = response.tokens
     const useCachedInput = !!request.context && request.context.length > 0
 
-    if (shouldBillModelUsage(response.model)) {
-      response.cost = calculateCost(response.model, promptTokens, completionTokens, useCachedInput)
+    const shouldBill = shouldBillModelUsage(response.model) && !isBYOK
+    if (shouldBill) {
+      const costMultiplier = getCostMultiplier()
+      response.cost = calculateCost(
+        response.model,
+        promptTokens,
+        completionTokens,
+        useCachedInput,
+        costMultiplier,
+        costMultiplier
+      )
     } else {
       response.cost = {
         input: 0,
@@ -99,9 +152,13 @@ export async function executeProviderRequest(
           updatedAt: new Date().toISOString(),
         },
       }
-      logger.debug(
-        `Not billing model usage for ${response.model} - user provided API key or not hosted model`
-      )
+      if (isBYOK) {
+        logger.debug(`Not billing model usage for ${response.model} - workspace BYOK key used`)
+      } else {
+        logger.debug(
+          `Not billing model usage for ${response.model} - user provided API key or not hosted model`
+        )
+      }
     }
   }
 

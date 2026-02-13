@@ -14,7 +14,6 @@ export const listSitesTool: ToolConfig<SharepointToolParams, SharepointReadSiteR
   oauth: {
     required: true,
     provider: 'sharepoint',
-    additionalScopes: ['openid', 'profile', 'email', 'Sites.Read.All', 'offline_access'],
   },
 
   params: {
@@ -33,8 +32,9 @@ export const listSitesTool: ToolConfig<SharepointToolParams, SharepointReadSiteR
     groupId: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'The group ID for accessing a group team site',
+      visibility: 'user-or-llm',
+      description:
+        'The group ID for accessing a group team site. Example: a GUID like 12345678-1234-1234-1234-123456789012',
     },
   },
 

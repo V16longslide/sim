@@ -1,7 +1,7 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
 import { authorizeCredentialUse } from '@/lib/auth/credential-access'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import { generateRequestId } from '@/lib/core/utils/request'
 import { refreshAccessTokenIfNeeded } from '@/app/api/auth/oauth/utils'
 export const dynamic = 'force-dynamic'
 
@@ -25,7 +25,6 @@ export async function GET(request: NextRequest) {
   logger.info(`[${requestId}] Google Calendar calendars request received`)
 
   try {
-    // Get the credential ID from the query params
     const { searchParams } = new URL(request.url)
     const credentialId = searchParams.get('credentialId')
     const workflowId = searchParams.get('workflowId') || undefined
@@ -39,7 +38,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: authz.error || 'Unauthorized' }, { status: 403 })
     }
 
-    // Refresh access token if needed using the utility function
     const accessToken = await refreshAccessTokenIfNeeded(
       credentialId,
       authz.credentialOwnerUserId,
@@ -50,7 +48,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to obtain valid access token' }, { status: 401 })
     }
 
-    // Fetch calendars from Google Calendar API
     logger.info(`[${requestId}] Fetching calendars from Google Calendar API`)
     const calendarResponse = await fetch(
       'https://www.googleapis.com/calendar/v3/users/me/calendarList',
@@ -81,7 +78,6 @@ export async function GET(request: NextRequest) {
     const data = await calendarResponse.json()
     const calendars: CalendarListItem[] = data.items || []
 
-    // Sort calendars with primary first, then alphabetically
     calendars.sort((a, b) => {
       if (a.primary && !b.primary) return -1
       if (!a.primary && b.primary) return 1

@@ -1,4 +1,4 @@
-import type { ToolResponse } from '@/tools/types'
+import type { ToolFileData, ToolResponse } from '@/tools/types'
 
 export interface TypeformFilesParams {
   formId: string
@@ -12,6 +12,7 @@ export interface TypeformFilesParams {
 export interface TypeformFilesResponse extends ToolResponse {
   output: {
     fileUrl: string
+    file: ToolFileData
     contentType: string
     filename: string
   }
@@ -101,6 +102,139 @@ export interface TypeformResponsesResponse extends ToolResponse {
         [key: string]: any
       }>
     }>
+  }
+}
+
+export interface TypeformListFormsParams {
+  apiKey: string
+  search?: string
+  page?: number
+  pageSize?: number
+  workspaceId?: string
+}
+
+export interface TypeformListFormsResponse extends ToolResponse {
+  output: {
+    total_items: number
+    page_count: number
+    items: Array<{
+      id: string
+      title: string
+      created_at: string
+      last_updated_at: string
+      settings: {
+        is_public: boolean
+        [key: string]: any
+      }
+      theme: {
+        href: string
+      }
+      _links: {
+        display: string
+        responses: string
+      }
+      [key: string]: any
+    }>
+  }
+}
+
+export interface TypeformGetFormParams {
+  apiKey: string
+  formId: string
+}
+
+export interface TypeformGetFormResponse extends ToolResponse {
+  output: {
+    id: string
+    title: string
+    type: string
+    created_at: string
+    last_updated_at: string
+    settings: Record<string, any>
+    theme: Record<string, any>
+    workspace: {
+      href: string
+    }
+    fields: Array<{
+      id: string
+      title: string
+      type: string
+      ref: string
+      properties?: Record<string, any>
+      validations?: Record<string, any>
+      [key: string]: any
+    }>
+    thankyou_screens?: Array<{
+      id: string
+      title: string
+      ref: string
+      properties?: Record<string, any>
+      [key: string]: any
+    }>
+    _links: {
+      display: string
+      responses: string
+    }
+    [key: string]: any
+  }
+}
+
+export interface TypeformCreateFormParams {
+  apiKey: string
+  title: string
+  type?: string
+  workspaceId?: string
+  fields?: Array<Record<string, any>>
+  settings?: Record<string, any>
+  themeId?: string
+}
+
+export interface TypeformCreateFormResponse extends ToolResponse {
+  output: {
+    id: string
+    title: string
+    type: string
+    created_at: string
+    last_updated_at: string
+    settings: Record<string, any>
+    theme: Record<string, any>
+    workspace?: {
+      href: string
+    }
+    fields: Array<Record<string, any>>
+    _links: {
+      display: string
+      responses: string
+    }
+    [key: string]: any
+  }
+}
+
+export interface TypeformUpdateFormParams {
+  apiKey: string
+  formId: string
+  operations: Array<{
+    op: 'add' | 'remove' | 'replace'
+    path: string
+    value?: any
+  }>
+}
+
+export interface TypeformUpdateFormResponse extends ToolResponse {
+  output: {
+    message: string
+  }
+}
+
+export interface TypeformDeleteFormParams {
+  apiKey: string
+  formId: string
+}
+
+export interface TypeformDeleteFormResponse extends ToolResponse {
+  output: {
+    deleted: boolean
+    message: string
   }
 }
 

@@ -1,14 +1,24 @@
-import type { OAuthService } from '@/lib/oauth/oauth'
+import type { OAuthService } from '@/lib/oauth'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD'
 
+export type OutputType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'json'
+  | 'file'
+  | 'file[]'
+  | 'array'
+  | 'object'
+
 export interface OutputProperty {
-  type: string
+  type: OutputType
   description?: string
   optional?: boolean
   properties?: Record<string, OutputProperty>
   items?: {
-    type: string
+    type: OutputType
     description?: string
     properties?: Record<string, OutputProperty>
   }
@@ -34,7 +44,7 @@ export interface ToolResponse {
 export interface OAuthConfig {
   required: boolean // Whether this tool requires OAuth authentication
   provider: OAuthService // The service that needs to be authorized
-  additionalScopes?: string[] // Additional scopes required for the tool
+  requiredScopes?: string[] // Specific scopes this tool needs (for granular scope validation)
 }
 
 export interface ToolConfig<P = any, R = any> {
@@ -53,22 +63,27 @@ export interface ToolConfig<P = any, R = any> {
       visibility?: ParameterVisibility
       default?: any
       description?: string
+      items?: {
+        type: string
+        description?: string
+        properties?: Record<string, { type: string; description?: string }>
+      }
     }
   >
 
-  // Output schema - what this tool produces
   outputs?: Record<
     string,
     {
-      type: 'string' | 'number' | 'boolean' | 'json' | 'file' | 'file[]' | 'array' | 'object'
+      type: OutputType
       description?: string
       optional?: boolean
       fileConfig?: {
-        mimeType?: string // Expected MIME type for file outputs
-        extension?: string // Expected file extension
+        mimeType?: string
+        extension?: string
       }
       items?: {
-        type: string
+        type: OutputType
+        description?: string
         properties?: Record<string, OutputProperty>
       }
       properties?: Record<string, OutputProperty>
@@ -78,12 +93,17 @@ export interface ToolConfig<P = any, R = any> {
   // OAuth configuration for this tool (if it requires authentication)
   oauth?: OAuthConfig
 
+  // Error extractor to use for this tool's error responses
+  // If specified, only this extractor will be used (deterministic)
+  // If not specified, will try all extractors in order (fallback)
+  errorExtractor?: string
+
   // Request configuration
   request: {
     url: string | ((params: P) => string)
     method: HttpMethod | ((params: P) => HttpMethod)
     headers: (params: P) => Record<string, string>
-    body?: (params: P) => Record<string, any>
+    body?: (params: P) => Record<string, any> | string | FormData | undefined
   }
 
   // Post-processing (optional) - allows additional processing after the initial request
@@ -95,6 +115,18 @@ export interface ToolConfig<P = any, R = any> {
 
   // Response handling
   transformResponse?: (response: Response, params?: P) => Promise<R>
+
+  /**
+   * Direct execution function for tools that don't need HTTP requests.
+   * If provided, this will be called instead of making an HTTP request.
+   */
+  directExecution?: (params: P) => Promise<ToolResponse>
+
+  /**
+   * Optional dynamic schema enrichment for specific params.
+   * Maps param IDs to their enrichment configuration.
+   */
+  schemaEnrichment?: Record<string, SchemaEnrichmentConfig>
 }
 
 export interface TableRow {
@@ -106,7 +138,9 @@ export interface TableRow {
 }
 
 export interface OAuthTokenPayload {
-  credentialId: string
+  credentialId?: string
+  credentialAccountUserId?: string
+  providerId?: string
   workflowId?: string
 }
 
@@ -119,4 +153,20 @@ export interface ToolFileData {
   data?: Buffer | string // Buffer or base64 string
   url?: string // URL to download file from
   size?: number
+}
+
+/**
+ * Configuration for dynamically enriching a parameter's schema at runtime.
+ * Used when a parameter's schema depends on runtime values (e.g., KB tags, workflow inputs).
+ */
+export interface SchemaEnrichmentConfig {
+  /** The param ID that this enrichment depends on (e.g., 'knowledgeBaseId', 'workflowId') */
+  dependsOn: string
+  /** Function to fetch and build dynamic schema based on the dependency value */
+  enrichSchema: (dependencyValue: string) => Promise<{
+    type: string
+    properties?: Record<string, { type: string; description?: string }>
+    description?: string
+    required?: string[]
+  } | null>
 }

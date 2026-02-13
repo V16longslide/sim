@@ -23,8 +23,8 @@ export const queryTool: ToolConfig<MySQLQueryParams, MySQLResponse> = {
     database: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'Database name to connect to',
+      visibility: 'user-or-llm',
+      description: 'Database name to connect to (e.g., my_database)',
     },
     username: {
       type: 'string',
@@ -48,7 +48,7 @@ export const queryTool: ToolConfig<MySQLQueryParams, MySQLResponse> = {
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'SQL SELECT query to execute',
+      description: 'SQL SELECT query to execute (e.g., SELECT * FROM users WHERE active = 1)',
     },
   },
 
@@ -60,7 +60,7 @@ export const queryTool: ToolConfig<MySQLQueryParams, MySQLResponse> = {
     }),
     body: (params) => ({
       host: params.host,
-      port: params.port,
+      port: Number(params.port),
       database: params.database,
       username: params.username,
       password: params.password,

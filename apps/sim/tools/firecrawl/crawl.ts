@@ -1,11 +1,13 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { DEFAULT_EXECUTION_TIMEOUT_MS } from '@/lib/core/execution-limits'
 import type { FirecrawlCrawlParams, FirecrawlCrawlResponse } from '@/tools/firecrawl/types'
+import { CRAWLED_PAGE_OUTPUT_PROPERTIES } from '@/tools/firecrawl/types'
 import type { ToolConfig } from '@/tools/types'
 
 const logger = createLogger('FirecrawlCrawlTool')
 
-const POLL_INTERVAL_MS = 5000 // 5 seconds between polls
-const MAX_POLL_TIME_MS = 300000 // 5 minutes maximum polling time
+const POLL_INTERVAL_MS = 5000
+const MAX_POLL_TIME_MS = DEFAULT_EXECUTION_TIMEOUT_MS
 
 export const crawlTool: ToolConfig<FirecrawlCrawlParams, FirecrawlCrawlResponse> = {
   id: 'firecrawl_crawl',
@@ -17,13 +19,41 @@ export const crawlTool: ToolConfig<FirecrawlCrawlParams, FirecrawlCrawlResponse>
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'The website URL to crawl',
+      description:
+        'The website URL to crawl (e.g., "https://example.com" or "https://docs.example.com/guide")',
     },
     limit: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Maximum number of pages to crawl (default: 100)',
+      visibility: 'user-or-llm',
+      description: 'Maximum number of pages to crawl (e.g., 50, 100, 500). Default: 100',
+    },
+    maxDepth: {
+      type: 'number',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Maximum depth to crawl from the starting URL (e.g., 1, 2, 3). Controls how many levels deep to follow links',
+    },
+    formats: {
+      type: 'json',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Output formats for scraped content (e.g., ["markdown"], ["markdown", "html"], ["markdown", "links"])',
+    },
+    excludePaths: {
+      type: 'json',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'URL paths to exclude from crawling (e.g., ["/blog/*", "/admin/*", "/*.pdf"])',
+    },
+    includePaths: {
+      type: 'json',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'URL paths to include in crawling (e.g., ["/docs/*", "/api/*"]). Only these paths will be crawled',
     },
     onlyMainContent: {
       type: 'boolean',
@@ -39,20 +69,43 @@ export const crawlTool: ToolConfig<FirecrawlCrawlParams, FirecrawlCrawlResponse>
     },
   },
   request: {
-    url: 'https://api.firecrawl.dev/v1/crawl',
+    url: 'https://api.firecrawl.dev/v2/crawl',
     method: 'POST',
     headers: (params) => ({
       'Content-Type': 'application/json',
       Authorization: `Bearer ${params.apiKey}`,
     }),
-    body: (params) => ({
-      url: params.url,
-      limit: Number(params.limit) || 100,
-      scrapeOptions: {
-        formats: ['markdown'],
-        onlyMainContent: params.onlyMainContent || false,
-      },
-    }),
+    body: (params) => {
+      const body: Record<string, any> = {
+        url: params.url,
+        limit: Number(params.limit) || 100,
+        scrapeOptions: params.scrapeOptions || {
+          formats: params.formats || ['markdown'],
+          onlyMainContent: params.onlyMainContent || false,
+        },
+      }
+
+      if (params.prompt) body.prompt = params.prompt
+      if (params.maxDepth) body.maxDiscoveryDepth = Number(params.maxDepth)
+      if (params.maxDiscoveryDepth) body.maxDiscoveryDepth = Number(params.maxDiscoveryDepth)
+      if (params.sitemap) body.sitemap = params.sitemap
+      if (typeof params.crawlEntireDomain === 'boolean')
+        body.crawlEntireDomain = params.crawlEntireDomain
+      if (typeof params.allowExternalLinks === 'boolean')
+        body.allowExternalLinks = params.allowExternalLinks
+      if (typeof params.allowSubdomains === 'boolean') body.allowSubdomains = params.allowSubdomains
+      if (typeof params.ignoreQueryParameters === 'boolean')
+        body.ignoreQueryParameters = params.ignoreQueryParameters
+      if (params.delay) body.delay = Number(params.delay)
+      if (params.maxConcurrency) body.maxConcurrency = Number(params.maxConcurrency)
+      if (params.excludePaths) body.excludePaths = params.excludePaths
+      if (params.includePaths) body.includePaths = params.includePaths
+      if (params.webhook) body.webhook = params.webhook
+      if (typeof params.zeroDataRetention === 'boolean')
+        body.zeroDataRetention = params.zeroDataRetention
+
+      return body
+    },
   },
   transformResponse: async (response: Response) => {
     const data = await response.json()
@@ -79,10 +132,11 @@ export const crawlTool: ToolConfig<FirecrawlCrawlParams, FirecrawlCrawlResponse>
 
     while (elapsedTime < MAX_POLL_TIME_MS) {
       try {
-        const statusResponse = await fetch(`/api/tools/firecrawl/crawl/${jobId}`, {
+        const statusResponse = await fetch(`https://api.firecrawl.dev/v2/crawl/${jobId}`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${params.apiKey}`,
+            'Content-Type': 'application/json',
           },
         })
 
@@ -142,21 +196,7 @@ export const crawlTool: ToolConfig<FirecrawlCrawlParams, FirecrawlCrawlResponse>
       description: 'Array of crawled pages with their content and metadata',
       items: {
         type: 'object',
-        properties: {
-          markdown: { type: 'string', description: 'Page content in markdown format' },
-          html: { type: 'string', description: 'Page HTML content' },
-          metadata: {
-            type: 'object',
-            description: 'Page metadata',
-            properties: {
-              title: { type: 'string', description: 'Page title' },
-              description: { type: 'string', description: 'Page description' },
-              language: { type: 'string', description: 'Page language' },
-              sourceURL: { type: 'string', description: 'Source URL of the page' },
-              statusCode: { type: 'number', description: 'HTTP status code' },
-            },
-          },
-        },
+        properties: CRAWLED_PAGE_OUTPUT_PROPERTIES,
       },
     },
     total: { type: 'number', description: 'Total number of pages found during crawl' },

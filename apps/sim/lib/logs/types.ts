@@ -1,4 +1,5 @@
 import type { Edge } from 'reactflow'
+import type { SerializableExecutionState } from '@/executor/execution/types'
 import type { BlockLog, NormalizedBlockOutput } from '@/executor/types'
 import type { DeploymentStatus } from '@/stores/workflows/registry/types'
 import type { Loop, Parallel, WorkflowState } from '@/stores/workflows/workflow/types'
@@ -15,8 +16,8 @@ export interface PricingInfo {
 }
 
 export interface TokenUsage {
-  prompt: number
-  completion: number
+  input: number
+  output: number
   total: number
 }
 
@@ -35,8 +36,8 @@ export interface ToolCall {
   startTime: string
   endTime: string
   status: 'success' | 'error'
-  input: Record<string, unknown>
-  output: Record<string, unknown>
+  input?: Record<string, unknown>
+  output?: Record<string, unknown>
   error?: string
 }
 
@@ -51,8 +52,10 @@ export interface ExecutionEnvironment {
   workspaceId: string
 }
 
+import type { CoreTriggerType } from '@/stores/logs/filters/types'
+
 export interface ExecutionTrigger {
-  type: 'api' | 'webhook' | 'schedule' | 'manual' | 'chat'
+  type: CoreTriggerType | string
   source: string
   data?: Record<string, unknown>
   timestamp: string
@@ -67,7 +70,7 @@ export interface ExecutionStatus {
 
 export interface WorkflowExecutionSnapshot {
   id: string
-  workflowId: string
+  workflowId: string | null
   stateHash: string
   stateData: WorkflowState
   createdAt: string
@@ -78,7 +81,7 @@ export type WorkflowExecutionSnapshotSelect = WorkflowExecutionSnapshot
 
 export interface WorkflowExecutionLog {
   id: string
-  workflowId: string
+  workflowId: string | null
   executionId: string
   stateSnapshotId: string
   level: 'info' | 'error'
@@ -93,16 +96,24 @@ export interface WorkflowExecutionLog {
     type: string
     url: string
     key: string
-    uploadedAt: string
-    expiresAt: string
-    storageProvider?: 's3' | 'blob' | 'local'
-    bucketName?: string
   }>
   // Execution details
   executionData: {
     environment?: ExecutionEnvironment
     trigger?: ExecutionTrigger
     traceSpans?: TraceSpan[]
+    tokens?: { input?: number; output?: number; total?: number }
+    models?: Record<
+      string,
+      {
+        input?: number
+        output?: number
+        total?: number
+        tokens?: { input?: number; output?: number; total?: number }
+      }
+    >
+    executionState?: SerializableExecutionState
+    finalOutput?: any
     errorDetails?: {
       blockId: string
       blockName: string
@@ -115,14 +126,14 @@ export interface WorkflowExecutionLog {
     input?: number
     output?: number
     total?: number
-    tokens?: { prompt?: number; completion?: number; total?: number }
+    tokens?: { input?: number; output?: number; total?: number }
     models?: Record<
       string,
       {
         input?: number
         output?: number
         total?: number
-        tokens?: { prompt?: number; completion?: number; total?: number }
+        tokens?: { input?: number; output?: number; total?: number }
       }
     >
   }
@@ -132,6 +143,27 @@ export interface WorkflowExecutionLog {
 
 export type WorkflowExecutionLogInsert = Omit<WorkflowExecutionLog, 'id' | 'createdAt'>
 export type WorkflowExecutionLogSelect = WorkflowExecutionLog
+
+export interface TokenInfo {
+  input?: number
+  output?: number
+  total?: number
+  prompt?: number
+  completion?: number
+}
+
+export interface ProviderTiming {
+  duration: number
+  startTime: string
+  endTime: string
+  segments: Array<{
+    type: string
+    name?: string
+    startTime: string | number
+    endTime: string | number
+    duration: number
+  }>
+}
 
 export interface TraceSpan {
   id: string
@@ -143,11 +175,25 @@ export interface TraceSpan {
   children?: TraceSpan[]
   toolCalls?: ToolCall[]
   status?: 'success' | 'error'
-  tokens?: number
+  /** Whether this block's error was handled by an error handler path */
+  errorHandled?: boolean
+  tokens?: number | TokenInfo
   relativeStartMs?: number
   blockId?: string
   input?: Record<string, unknown>
   output?: Record<string, unknown>
+  childWorkflowSnapshotId?: string
+  childWorkflowId?: string
+  model?: string
+  cost?: {
+    input?: number
+    output?: number
+    total?: number
+  }
+  providerTiming?: ProviderTiming
+  loopId?: string
+  parallelId?: string
+  iterationIndex?: number
 }
 
 export interface WorkflowExecutionSummary {
@@ -304,6 +350,7 @@ export interface SnapshotCreationResult {
 export interface ExecutionLoggerService {
   startWorkflowExecution(params: {
     workflowId: string
+    workspaceId: string
     executionId: string
     trigger: ExecutionTrigger
     environment: ExecutionEnvironment
@@ -326,5 +373,9 @@ export interface ExecutionLoggerService {
     }
     finalOutput: BlockOutputData
     traceSpans?: TraceSpan[]
+    workflowInput?: any
+    isResume?: boolean
+    level?: 'info' | 'error'
+    status?: 'completed' | 'failed' | 'cancelled' | 'pending'
   }): Promise<WorkflowExecutionLog>
 }

@@ -1,4 +1,6 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { COPILOT_CHAT_API_PATH, COPILOT_CHAT_STREAM_API_PATH } from '@/lib/copilot/constants'
+import type { CopilotMode, CopilotModelId, CopilotTransportMode } from '@/lib/copilot/models'
 
 const logger = createLogger('CopilotAPI')
 
@@ -24,6 +26,14 @@ export interface CopilotMessage {
 }
 
 /**
+ * Chat config stored in database
+ */
+export interface CopilotChatConfig {
+  mode?: CopilotMode
+  model?: CopilotModelId
+}
+
+/**
  * Chat interface for copilot conversations
  */
 export interface CopilotChat {
@@ -32,7 +42,8 @@ export interface CopilotChat {
   model: string
   messages: CopilotMessage[]
   messageCount: number
-  previewYaml: string | null
+  planArtifact: string | null
+  config: CopilotChatConfig | null
   createdAt: Date
   updatedAt: Date
 }
@@ -56,8 +67,9 @@ export interface SendMessageRequest {
   userMessageId?: string // ID from frontend for the user message
   chatId?: string
   workflowId?: string
-  mode?: 'ask' | 'agent'
-  depth?: 0 | 1 | 2 | 3
+  mode?: CopilotMode | CopilotTransportMode
+  model?: CopilotModelId
+  provider?: string
   prefetch?: boolean
   createNewChat?: boolean
   stream?: boolean
@@ -71,6 +83,8 @@ export interface SendMessageRequest {
     workflowId?: string
     executionId?: string
   }>
+  commands?: string[]
+  resumeFromEventId?: number
 }
 
 /**
@@ -109,7 +123,7 @@ export async function sendStreamingMessage(
   request: SendMessageRequest
 ): Promise<StreamingResponse> {
   try {
-    const { abortSignal, ...requestBody } = request
+    const { abortSignal, resumeFromEventId, ...requestBody } = request
     try {
       const preview = Array.isArray((requestBody as any).contexts)
         ? (requestBody as any).contexts.map((c: any) => ({
@@ -125,9 +139,56 @@ export async function sendStreamingMessage(
           ? (requestBody as any).contexts.length
           : 0,
         contextsPreview: preview,
+        resumeFromEventId,
       })
-    } catch {}
-    const response = await fetch('/api/copilot/chat', {
+    } catch (error) {
+      logger.warn('Failed to log streaming message context preview', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+
+    const streamId = request.userMessageId
+    if (typeof resumeFromEventId === 'number') {
+      if (!streamId) {
+        return {
+          success: false,
+          error: 'streamId is required to resume a stream',
+          status: 400,
+        }
+      }
+      const url = `${COPILOT_CHAT_STREAM_API_PATH}?streamId=${encodeURIComponent(
+        streamId
+      )}&from=${encodeURIComponent(String(resumeFromEventId))}`
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: abortSignal,
+        credentials: 'include',
+      })
+
+      if (!response.ok) {
+        const errorMessage = await handleApiError(response, 'Failed to resume streaming message')
+        return {
+          success: false,
+          error: errorMessage,
+          status: response.status,
+        }
+      }
+
+      if (!response.body) {
+        return {
+          success: false,
+          error: 'No response body received',
+          status: 500,
+        }
+      }
+
+      return {
+        success: true,
+        stream: response.body,
+      }
+    }
+
+    const response = await fetch(COPILOT_CHAT_API_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...requestBody, stream: true }),

@@ -1,40 +1,5 @@
 import { WorkflowIcon } from '@/components/icons'
-import { createLogger } from '@/lib/logs/console/logger'
 import type { BlockConfig } from '@/blocks/types'
-import { useWorkflowRegistry } from '@/stores/workflows/registry/store'
-import type { ToolResponse } from '@/tools/types'
-
-const logger = createLogger('WorkflowBlock')
-
-interface WorkflowResponse extends ToolResponse {
-  output: {
-    success: boolean
-    childWorkflowName: string
-    result: any
-    error?: string
-  }
-}
-
-// Helper function to get available workflows for the dropdown
-const getAvailableWorkflows = (): Array<{ label: string; id: string }> => {
-  try {
-    const { workflows, activeWorkflowId } = useWorkflowRegistry.getState()
-
-    // Filter out the current workflow to prevent recursion
-    const availableWorkflows = Object.entries(workflows)
-      .filter(([id]) => id !== activeWorkflowId)
-      .map(([id, workflow]) => ({
-        label: workflow.name || `Workflow ${id.slice(0, 8)}`,
-        id: id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label))
-
-    return availableWorkflows
-  } catch (error) {
-    logger.error('Error getting available workflows:', error)
-    return []
-  }
-}
 
 export const WorkflowBlock: BlockConfig = {
   type: 'workflow',
@@ -42,19 +7,19 @@ export const WorkflowBlock: BlockConfig = {
   description:
     'This is a core workflow block. Execute another workflow as a block in your workflow. Enter the input variable to pass to the child workflow.',
   category: 'blocks',
-  bgColor: '#705335',
+  bgColor: '#6366F1',
   icon: WorkflowIcon,
   subBlocks: [
     {
       id: 'workflowId',
       title: 'Select Workflow',
-      type: 'dropdown',
-      options: getAvailableWorkflows,
+      type: 'workflow-selector',
+      placeholder: 'Search workflows...',
       required: true,
     },
     {
       id: 'input',
-      title: 'Input Variable (Optional)',
+      title: 'Input Variable',
       type: 'short-input',
       placeholder: 'Select a variable to pass to the child workflow',
       description: 'This variable will be available as start.input in the child workflow',
@@ -77,7 +42,14 @@ export const WorkflowBlock: BlockConfig = {
   outputs: {
     success: { type: 'boolean', description: 'Execution success status' },
     childWorkflowName: { type: 'string', description: 'Child workflow name' },
+    childWorkflowId: { type: 'string', description: 'Child workflow ID' },
     result: { type: 'json', description: 'Workflow execution result' },
     error: { type: 'string', description: 'Error message' },
+    childTraceSpans: {
+      type: 'json',
+      description: 'Child workflow trace spans',
+      hiddenFromDisplay: true,
+    },
   },
+  hideFromToolbar: true,
 }

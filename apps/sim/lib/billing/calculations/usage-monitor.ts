@@ -1,14 +1,12 @@
 import { db } from '@sim/db'
 import { member, organization, userStats } from '@sim/db/schema'
-import { eq, inArray } from 'drizzle-orm'
-import { getOrganizationSubscription, getPlanPricing } from '@/lib/billing/core/billing'
+import { createLogger } from '@sim/logger'
+import { and, eq, inArray } from 'drizzle-orm'
 import { getUserUsageLimit } from '@/lib/billing/core/usage'
-import { isBillingEnabled } from '@/lib/environment'
-import { createLogger } from '@/lib/logs/console/logger'
+import { isBillingEnabled } from '@/lib/core/config/feature-flags'
 
 const logger = createLogger('UsageMonitor')
 
-// Percentage threshold for showing warning
 const WARNING_THRESHOLD = 80
 
 interface UsageData {
@@ -109,19 +107,10 @@ export async function checkUsageStatus(userId: string): Promise<UsageData> {
                 )
               }
             }
-            // Determine org cap
-            let orgCap = org.orgUsageLimit ? Number.parseFloat(String(org.orgUsageLimit)) : 0
+            // Determine org cap from orgUsageLimit (should always be set for team/enterprise)
+            const orgCap = org.orgUsageLimit ? Number.parseFloat(String(org.orgUsageLimit)) : 0
             if (!orgCap || Number.isNaN(orgCap)) {
-              // Fall back to minimum billing amount from Stripe subscription
-              const orgSub = await getOrganizationSubscription(org.id)
-              if (orgSub?.seats) {
-                const { basePrice } = getPlanPricing(orgSub.plan)
-                orgCap = (orgSub.seats || 1) * basePrice
-              } else {
-                // If no subscription, use team default
-                const { basePrice } = getPlanPricing('team')
-                orgCap = basePrice // Default to 1 seat minimum
-              }
+              logger.warn('Organization missing usage limit', { orgId: org.id })
             }
             if (pooledUsage >= orgCap) {
               isExceeded = true
@@ -157,13 +146,18 @@ export async function checkUsageStatus(userId: string): Promise<UsageData> {
       userId,
     })
 
-    // Return default values in case of error
+    // Block execution if we can't determine usage status
+    logger.error('Cannot determine usage status - blocking execution', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+
     return {
-      percentUsed: 0,
+      percentUsed: 100,
       isWarning: false,
-      isExceeded: false,
+      isExceeded: true, // Block execution when we can't determine status
       currentUsage: 0,
-      limit: 0,
+      limit: 0, // Zero limit forces blocking
     }
   }
 }
@@ -241,7 +235,6 @@ export async function checkServerSideUsageLimits(userId: string): Promise<{
   message?: string
 }> {
   try {
-    // If billing is disabled, always allow execution
     if (!isBillingEnabled) {
       return {
         isExceeded: false,
@@ -252,29 +245,75 @@ export async function checkServerSideUsageLimits(userId: string): Promise<{
 
     logger.info('Server-side checking usage limits for user', { userId })
 
-    // Hard block if billing is flagged as blocked
+    // Check user's own blocked status
     const stats = await db
       .select({
         blocked: userStats.billingBlocked,
+        blockedReason: userStats.billingBlockedReason,
         current: userStats.currentPeriodCost,
         total: userStats.totalCost,
       })
       .from(userStats)
       .where(eq(userStats.userId, userId))
       .limit(1)
+
+    const currentUsage =
+      stats.length > 0
+        ? Number.parseFloat(stats[0].current?.toString() || stats[0].total.toString())
+        : 0
+
     if (stats.length > 0 && stats[0].blocked) {
-      const currentUsage = Number.parseFloat(
-        stats[0].current?.toString() || stats[0].total.toString()
-      )
+      const message =
+        stats[0].blockedReason === 'dispute'
+          ? 'Account frozen. Please contact support to resolve this issue.'
+          : 'Billing issue detected. Please update your payment method to continue.'
       return {
         isExceeded: true,
         currentUsage,
         limit: 0,
-        message: 'Billing issue detected. Please update your payment method to continue.',
+        message,
       }
     }
 
-    // Get usage data using the same function we use for client-side
+    // Check if user is in an org where the owner is blocked
+    const memberships = await db
+      .select({ organizationId: member.organizationId })
+      .from(member)
+      .where(eq(member.userId, userId))
+
+    for (const m of memberships) {
+      // Find the owner of this org
+      const owners = await db
+        .select({ userId: member.userId })
+        .from(member)
+        .where(and(eq(member.organizationId, m.organizationId), eq(member.role, 'owner')))
+        .limit(1)
+
+      if (owners.length > 0) {
+        const ownerStats = await db
+          .select({
+            blocked: userStats.billingBlocked,
+            blockedReason: userStats.billingBlockedReason,
+          })
+          .from(userStats)
+          .where(eq(userStats.userId, owners[0].userId))
+          .limit(1)
+
+        if (ownerStats.length > 0 && ownerStats[0].blocked) {
+          const message =
+            ownerStats[0].blockedReason === 'dispute'
+              ? 'Organization account frozen. Please contact support to resolve this issue.'
+              : 'Organization billing issue. Please contact your organization owner.'
+          return {
+            isExceeded: true,
+            currentUsage,
+            limit: 0,
+            message,
+          }
+        }
+      }
+    }
+
     const usageData = await checkUsageStatus(userId)
 
     return {
@@ -291,12 +330,19 @@ export async function checkServerSideUsageLimits(userId: string): Promise<{
       userId,
     })
 
-    // Be conservative in case of error - allow execution but log the issue
+    logger.error('Cannot determine usage limits - blocking execution', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+
     return {
-      isExceeded: false,
+      isExceeded: true, // Block execution when we can't determine limits
       currentUsage: 0,
-      limit: 0,
-      message: `Error checking usage limits: ${error instanceof Error ? error.message : String(error)}`,
+      limit: 0, // Zero limit forces blocking
+      message:
+        error instanceof Error && error.message.includes('No user stats record found')
+          ? 'User account not properly initialized. Please contact support.'
+          : 'Unable to determine usage limits. Execution blocked for security. Please contact support.',
     }
   }
 }

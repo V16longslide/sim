@@ -3,23 +3,22 @@
   "pages": [
     "./introduction/index",
     "./getting-started/index",
-    "---Building Workflows---",
+    "./quick-reference/index",
     "triggers",
     "blocks",
     "tools",
     "connections",
     "mcp",
     "copilot",
+    "skills",
     "knowledgebase",
-    "---Configuration---",
     "variables",
-    "---Execution---",
     "execution",
-    "---Advanced---",
     "permissions",
-    "yaml",
-    "---SDKs---",
-    "sdks"
+    "sdks",
+    "self-hosting",
+    "./enterprise/index",
+    "./keyboard-shortcuts/index"
   ],
   "defaultOpen": false
 }

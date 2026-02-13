@@ -1,4 +1,5 @@
 import type { RedditCommentsParams, RedditCommentsResponse } from '@/tools/reddit/types'
+import { normalizeSubreddit } from '@/tools/reddit/utils'
 import type { ToolConfig } from '@/tools/types'
 
 export const getCommentsTool: ToolConfig<RedditCommentsParams, RedditCommentsResponse> = {
@@ -10,7 +11,6 @@ export const getCommentsTool: ToolConfig<RedditCommentsParams, RedditCommentsRes
   oauth: {
     required: true,
     provider: 'reddit',
-    additionalScopes: ['read'],
   },
 
   params: {
@@ -23,14 +23,14 @@ export const getCommentsTool: ToolConfig<RedditCommentsParams, RedditCommentsRes
     postId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the Reddit post to fetch comments from',
+      visibility: 'user-or-llm',
+      description: 'The ID of the Reddit post to fetch comments from (e.g., "abc123")',
     },
     subreddit: {
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'The subreddit where the post is located (without the r/ prefix)',
+      description: 'The subreddit where the post is located (e.g., "technology", "programming")',
     },
     sort: {
       type: 'string',
@@ -42,20 +42,102 @@ export const getCommentsTool: ToolConfig<RedditCommentsParams, RedditCommentsRes
     limit: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Maximum number of comments to return (default: 50, max: 100)',
+      visibility: 'user-or-llm',
+      description: 'Maximum number of comments to return (e.g., 25). Default: 50, max: 100',
+    },
+    depth: {
+      type: 'number',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Maximum depth of subtrees in the thread (controls nested comment levels)',
+    },
+    context: {
+      type: 'number',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Number of parent comments to include',
+    },
+    showedits: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Show edit information for comments',
+    },
+    showmore: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Include "load more comments" elements in the response',
+    },
+    showtitle: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Include submission title in the response',
+    },
+    threaded: {
+      type: 'boolean',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Return comments in threaded/nested format',
+    },
+    truncate: {
+      type: 'number',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Integer to truncate comment depth',
+    },
+    after: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Fullname of a thing to fetch items after (for pagination)',
+    },
+    before: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Fullname of a thing to fetch items before (for pagination)',
+    },
+    count: {
+      type: 'number',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'A count of items already seen in the listing (used for numbering)',
     },
   },
 
   request: {
     url: (params: RedditCommentsParams) => {
-      // Sanitize inputs
-      const subreddit = params.subreddit.trim().replace(/^r\//, '')
+      const subreddit = normalizeSubreddit(params.subreddit)
       const sort = params.sort || 'confidence'
       const limit = Math.min(Math.max(1, params.limit || 50), 100)
 
+      // Build URL with query parameters
+      const urlParams = new URLSearchParams({
+        sort: sort,
+        limit: limit.toString(),
+        raw_json: '1',
+      })
+
+      // Add comment-specific parameters if provided
+      if (params.depth !== undefined) urlParams.append('depth', Number(params.depth).toString())
+      if (params.context !== undefined)
+        urlParams.append('context', Number(params.context).toString())
+      if (params.showedits !== undefined) urlParams.append('showedits', params.showedits.toString())
+      if (params.showmore !== undefined) urlParams.append('showmore', params.showmore.toString())
+      if (params.showtitle !== undefined) urlParams.append('showtitle', params.showtitle.toString())
+      if (params.threaded !== undefined) urlParams.append('threaded', params.threaded.toString())
+      if (params.truncate !== undefined)
+        urlParams.append('truncate', Number(params.truncate).toString())
+
+      // Add pagination parameters if provided
+      if (params.after) urlParams.append('after', params.after)
+      if (params.before) urlParams.append('before', params.before)
+      if (params.count !== undefined) urlParams.append('count', Number(params.count).toString())
+
       // Build URL using OAuth endpoint
-      return `https://oauth.reddit.com/r/${subreddit}/comments/${params.postId}?sort=${sort}&limit=${limit}&raw_json=1`
+      return `https://oauth.reddit.com/r/${subreddit}/comments/${params.postId}?${urlParams.toString()}`
     },
     method: 'GET',
     headers: (params: RedditCommentsParams) => {

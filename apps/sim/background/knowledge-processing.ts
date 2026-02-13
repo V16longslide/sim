@@ -1,7 +1,7 @@
+import { createLogger } from '@sim/logger'
 import { task } from '@trigger.dev/sdk'
-import { env } from '@/lib/env'
+import { env } from '@/lib/core/config/env'
 import { processDocumentAsync } from '@/lib/knowledge/documents/service'
-import { createLogger } from '@/lib/logs/console/logger'
 
 const logger = createLogger('TriggerKnowledgeProcessing')
 
@@ -26,7 +26,8 @@ export type DocumentProcessingPayload = {
 
 export const processDocument = task({
   id: 'knowledge-process-document',
-  maxDuration: env.KB_CONFIG_MAX_DURATION || 300,
+  maxDuration: env.KB_CONFIG_MAX_DURATION || 600,
+  machine: 'large-1x', // 2 vCPU, 2GB RAM - needed for large PDF processing
   retry: {
     maxAttempts: env.KB_CONFIG_MAX_ATTEMPTS || 3,
     factor: env.KB_CONFIG_RETRY_FACTOR || 2,

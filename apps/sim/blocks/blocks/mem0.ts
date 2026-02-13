@@ -1,13 +1,13 @@
 import { Mem0Icon } from '@/components/icons'
-import type { BlockConfig } from '@/blocks/types'
+import { AuthMode, type BlockConfig } from '@/blocks/types'
 import type { Mem0Response } from '@/tools/mem0/types'
 
 export const Mem0Block: BlockConfig<Mem0Response> = {
   type: 'mem0',
   name: 'Mem0',
   description: 'Agent memory management',
-  longDescription:
-    'Integrate Mem0 into the workflow. Can add, search, and retrieve memories. Requires API Key.',
+  authMode: AuthMode.ApiKey,
+  longDescription: 'Integrate Mem0 into the workflow. Can add, search, and retrieve memories.',
   bgColor: '#181C1E',
   icon: Mem0Icon,
   category: 'tools',
@@ -17,7 +17,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'operation',
       title: 'Operation',
       type: 'dropdown',
-      layout: 'half',
       options: [
         { label: 'Add Memories', id: 'add' },
         { label: 'Search Memories', id: 'search' },
@@ -30,7 +29,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'userId',
       title: 'User ID',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter user identifier',
       value: () => 'userid', // Default to the working user ID from curl example
       required: true,
@@ -39,7 +37,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'messages',
       title: 'Messages',
       type: 'code',
-      layout: 'full',
       placeholder: 'JSON array, e.g. [{"role": "user", "content": "I love Sim!"}]',
       language: 'json',
       condition: {
@@ -52,7 +49,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'query',
       title: 'Search Query',
       type: 'long-input',
-      layout: 'full',
       placeholder: 'Enter search query to find relevant memories',
       condition: {
         field: 'operation',
@@ -64,7 +60,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'memoryId',
       title: 'Memory ID',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Specific memory ID to retrieve',
       condition: {
         field: 'operation',
@@ -75,29 +70,52 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'startDate',
       title: 'Start Date',
       type: 'short-input',
-      layout: 'half',
       placeholder: 'YYYY-MM-DD',
       condition: {
         field: 'operation',
         value: 'get',
+      },
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate a date in YYYY-MM-DD format based on the user's description.
+Examples:
+- "last week" -> Calculate 7 days ago
+- "beginning of this month" -> First day of current month
+- "30 days ago" -> Calculate 30 days ago
+- "start of year" -> January 1 of current year
+
+Return ONLY the date string in YYYY-MM-DD format - no explanations, no quotes, no extra text.`,
+        placeholder: 'Describe the start date (e.g., "last week", "30 days ago")...',
+        generationType: 'timestamp',
       },
     },
     {
       id: 'endDate',
       title: 'End Date',
       type: 'short-input',
-      layout: 'half',
       placeholder: 'YYYY-MM-DD',
       condition: {
         field: 'operation',
         value: 'get',
+      },
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate a date in YYYY-MM-DD format based on the user's description.
+Examples:
+- "today" -> Today's date
+- "yesterday" -> Yesterday's date
+- "end of last week" -> Last Sunday's date
+- "now" -> Today's date
+
+Return ONLY the date string in YYYY-MM-DD format - no explanations, no quotes, no extra text.`,
+        placeholder: 'Describe the end date (e.g., "today", "yesterday")...',
+        generationType: 'timestamp',
       },
     },
     {
       id: 'apiKey',
       title: 'API Key',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter your Mem0 API key',
       password: true,
       required: true,
@@ -106,7 +124,6 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
       id: 'limit',
       title: 'Result Limit',
       type: 'slider',
-      layout: 'full',
       min: 1,
       max: 50,
       step: 1,
@@ -157,23 +174,14 @@ export const Mem0Block: BlockConfig<Mem0Response> = {
         if (params.operation === 'add') {
           if (!params.messages) {
             errors.push('Messages are required for add operation')
+          } else if (!Array.isArray(params.messages) || params.messages.length === 0) {
+            errors.push('Messages must be a non-empty array')
           } else {
-            try {
-              const messagesArray =
-                typeof params.messages === 'string' ? JSON.parse(params.messages) : params.messages
-
-              if (!Array.isArray(messagesArray) || messagesArray.length === 0) {
-                errors.push('Messages must be a non-empty array')
-              } else {
-                for (const msg of messagesArray) {
-                  if (!msg.role || !msg.content) {
-                    errors.push("Each message must have 'role' and 'content' properties")
-                    break
-                  }
-                }
+            for (const msg of params.messages) {
+              if (!msg.role || !msg.content) {
+                errors.push("Each message must have 'role' and 'content' properties")
+                break
               }
-            } catch (_e: any) {
-              errors.push('Messages must be valid JSON')
             }
           }
 

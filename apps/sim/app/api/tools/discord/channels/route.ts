@@ -1,5 +1,7 @@
-import { NextResponse } from 'next/server'
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { type NextRequest, NextResponse } from 'next/server'
+import { checkInternalAuth } from '@/lib/auth/hybrid'
+import { validateNumericId } from '@/lib/core/security/input-validation'
 
 interface DiscordChannel {
   id: string
@@ -12,7 +14,12 @@ export const dynamic = 'force-dynamic'
 
 const logger = createLogger('DiscordChannelsAPI')
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const auth = await checkInternalAuth(request)
+  if (!auth.success || !auth.userId) {
+    return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const { botToken, serverId, channelId } = await request.json()
 
@@ -26,11 +33,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Server ID is required' }, { status: 400 })
     }
 
-    // If channelId is provided, we'll fetch just that specific channel
+    const serverIdValidation = validateNumericId(serverId, 'serverId')
+    if (!serverIdValidation.isValid) {
+      logger.error(`Invalid server ID: ${serverIdValidation.error}`)
+      return NextResponse.json({ error: serverIdValidation.error }, { status: 400 })
+    }
+
     if (channelId) {
+      const channelIdValidation = validateNumericId(channelId, 'channelId')
+      if (!channelIdValidation.isValid) {
+        logger.error(`Invalid channel ID: ${channelIdValidation.error}`)
+        return NextResponse.json({ error: channelIdValidation.error }, { status: 400 })
+      }
+
       logger.info(`Fetching single Discord channel: ${channelId}`)
 
-      // Fetch a specific channel by ID
       const response = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
         method: 'GET',
         headers: {
@@ -58,7 +75,6 @@ export async function POST(request: Request) {
 
       const channel = (await response.json()) as DiscordChannel
 
-      // Verify this is a text channel and belongs to the requested server
       if (channel.guild_id !== serverId) {
         logger.error('Channel does not belong to the specified server')
         return NextResponse.json(
@@ -85,8 +101,6 @@ export async function POST(request: Request) {
 
     logger.info(`Fetching all Discord channels for server: ${serverId}`)
 
-    // Listing guild channels with a bot token is allowed if the bot is in the guild.
-    // Keep the request, but if unauthorized, return an empty list so the selector doesn't hard fail.
     const response = await fetch(`https://discord.com/api/v10/guilds/${serverId}/channels`, {
       method: 'GET',
       headers: {
@@ -108,7 +122,6 @@ export async function POST(request: Request) {
 
     const channels = (await response.json()) as DiscordChannel[]
 
-    // Filter to just text channels (type 0)
     const textChannels = channels.filter((channel: DiscordChannel) => channel.type === 0)
 
     logger.info(`Successfully fetched ${textChannels.length} text channels`)

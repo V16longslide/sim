@@ -39,6 +39,8 @@ The chart includes several pre-configured values files for different scenarios:
 | `values-azure.yaml` | Azure AKS optimized | Azure Kubernetes Service |
 | `values-aws.yaml` | AWS EKS optimized | Amazon Elastic Kubernetes Service |
 | `values-gcp.yaml` | GCP GKE optimized | Google Kubernetes Engine |
+| `values-external-secrets.yaml` | External Secrets Operator integration | Using Azure Key Vault, AWS Secrets Manager, Vault |
+| `values-existing-secret.yaml` | Pre-existing Kubernetes secrets | GitOps, Sealed Secrets, manual secret management |
 
 ### Development Environment
 
@@ -623,16 +625,130 @@ To uninstall/delete the release:
 helm uninstall sim
 ```
 
+## External Secret Management
+
+The chart supports integration with external secret management systems for production-grade secret handling. This enables you to store secrets in secure vaults and have them automatically synced to Kubernetes.
+
+### Option 1: External Secrets Operator (Recommended)
+
+[External Secrets Operator](https://external-secrets.io/) is the industry-standard solution for syncing secrets from external stores like Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, and GCP Secret Manager.
+
+**Prerequisites:**
+```bash
+# Install External Secrets Operator
+helm repo add external-secrets https://charts.external-secrets.io
+helm install external-secrets external-secrets/external-secrets \
+  -n external-secrets --create-namespace
+```
+
+**Configuration:**
+```yaml
+externalSecrets:
+  enabled: true
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: "my-secret-store"
+    kind: "ClusterSecretStore"
+  remoteRefs:
+    app:
+      BETTER_AUTH_SECRET: "sim/app/better-auth-secret"
+      ENCRYPTION_KEY: "sim/app/encryption-key"
+      INTERNAL_API_SECRET: "sim/app/internal-api-secret"
+    postgresql:
+      password: "sim/postgresql/password"
+```
+
+See `examples/values-external-secrets.yaml` for complete examples including SecretStore configurations for Azure, AWS, GCP, and Vault.
+
+### Option 2: Pre-Existing Kubernetes Secrets
+
+Reference secrets you've created manually, via GitOps (Sealed Secrets, SOPS), or through other automation.
+
+**Configuration:**
+```yaml
+app:
+  secrets:
+    existingSecret:
+      enabled: true
+      name: "my-app-secrets"
+
+postgresql:
+  auth:
+    existingSecret:
+      enabled: true
+      name: "my-postgresql-secret"
+      passwordKey: "POSTGRES_PASSWORD"
+
+externalDatabase:
+  existingSecret:
+    enabled: true
+    name: "my-external-db-secret"
+    passwordKey: "password"
+```
+
+**Create secrets manually:**
+```bash
+# Generate secure values
+BETTER_AUTH_SECRET=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
+INTERNAL_API_SECRET=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
+
+# Create app secrets
+kubectl create secret generic my-app-secrets \
+  --namespace sim \
+  --from-literal=BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
+  --from-literal=ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  --from-literal=INTERNAL_API_SECRET="$INTERNAL_API_SECRET"
+
+# Create PostgreSQL secret
+kubectl create secret generic my-postgresql-secret \
+  --namespace sim \
+  --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+```
+
+See `examples/values-existing-secret.yaml` for more details.
+
+### External Secrets Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `app.secrets.existingSecret.enabled` | Use existing secret for app credentials | `false` |
+| `app.secrets.existingSecret.name` | Name of existing secret | `""` |
+| `app.secrets.existingSecret.keys` | Key name mappings | See values.yaml |
+| `postgresql.auth.existingSecret.enabled` | Use existing secret for PostgreSQL | `false` |
+| `postgresql.auth.existingSecret.name` | Name of existing secret | `""` |
+| `postgresql.auth.existingSecret.passwordKey` | Key containing password | `"POSTGRES_PASSWORD"` |
+| `externalDatabase.existingSecret.enabled` | Use existing secret for external DB | `false` |
+| `externalDatabase.existingSecret.name` | Name of existing secret | `""` |
+| `externalDatabase.existingSecret.passwordKey` | Key containing password | `"EXTERNAL_DB_PASSWORD"` |
+| `externalSecrets.enabled` | Enable External Secrets Operator integration | `false` |
+| `externalSecrets.refreshInterval` | How often to sync secrets | `"1h"` |
+| `externalSecrets.secretStoreRef.name` | Name of SecretStore/ClusterSecretStore | `""` |
+| `externalSecrets.secretStoreRef.kind` | Kind of store | `"ClusterSecretStore"` |
+| `externalSecrets.remoteRefs.app.*` | Remote paths for app secrets | See values.yaml |
+| `externalSecrets.remoteRefs.postgresql.password` | Remote path for PostgreSQL password | `""` |
+| `externalSecrets.remoteRefs.externalDatabase.password` | Remote path for external DB password | `""` |
+
 ## Security Considerations
 
 ### Production Secrets
 
 For production deployments, make sure to:
 
-1. **Change default secrets**: Update `BETTER_AUTH_SECRET` and `ENCRYPTION_KEY` with secure, randomly generated values
+1. **Change default secrets**: Update `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `INTERNAL_API_SECRET` with secure, randomly generated values using `openssl rand -hex 32`
 2. **Use strong database passwords**: Set `postgresql.auth.password` to a strong password
 3. **Enable TLS**: Configure `postgresql.tls.enabled=true` and provide proper certificates
 4. **Configure ingress TLS**: Enable HTTPS with proper SSL certificates
+
+**Required Secrets:**
+- `BETTER_AUTH_SECRET`: Authentication JWT signing (minimum 32 characters)
+- `ENCRYPTION_KEY`: Encrypts sensitive data like environment variables (minimum 32 characters)
+- `INTERNAL_API_SECRET`: Internal service-to-service authentication (minimum 32 characters)
+
+**Optional Security (Recommended for Production):**
+- `CRON_SECRET`: Authenticates scheduled job requests to API endpoints (required only if `cronjobs.enabled=true`)
+- `API_ENCRYPTION_KEY`: Encrypts API keys at rest in database (must be exactly 64 hex characters). If not set, API keys are stored in plain text. Generate using: `openssl rand -hex 32` (outputs 64 hex chars representing 32 bytes)
 
 ### Example secure values:
 
@@ -641,6 +757,9 @@ app:
   env:
     BETTER_AUTH_SECRET: "your-secure-random-string-here"
     ENCRYPTION_KEY: "your-secure-encryption-key-here"
+    INTERNAL_API_SECRET: "your-secure-internal-api-secret-here"
+    CRON_SECRET: "your-secure-cron-secret-here"
+    API_ENCRYPTION_KEY: "your-64-char-hex-string-for-api-key-encryption"  # Optional but recommended
 
 postgresql:
   auth:

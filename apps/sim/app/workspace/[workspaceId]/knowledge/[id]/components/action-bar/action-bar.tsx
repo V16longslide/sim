@@ -1,8 +1,7 @@
 import { motion } from 'framer-motion'
-import { Circle, CircleOff, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { Circle, CircleOff } from 'lucide-react'
+import { Button, Tooltip, Trash2 } from '@/components/emcn'
+import { cn } from '@/lib/core/utils/cn'
 import { useUserPermissionsContext } from '@/app/workspace/[workspaceId]/providers/workspace-permissions-provider'
 
 interface ActionBarProps {
@@ -14,6 +13,11 @@ interface ActionBarProps {
   disabledCount?: number
   isLoading?: boolean
   className?: string
+  totalCount?: number
+  isAllPageSelected?: boolean
+  isAllSelected?: boolean
+  onSelectAll?: () => void
+  onClearSelectAll?: () => void
 }
 
 export function ActionBar({
@@ -25,14 +29,21 @@ export function ActionBar({
   disabledCount = 0,
   isLoading = false,
   className,
+  totalCount = 0,
+  isAllPageSelected = false,
+  isAllSelected = false,
+  onSelectAll,
+  onClearSelectAll,
 }: ActionBarProps) {
   const userPermissions = useUserPermissionsContext()
 
-  if (selectedCount === 0) return null
+  if (selectedCount === 0 && !isAllSelected) return null
 
   const canEdit = userPermissions.canEdit
   const showEnableButton = disabledCount > 0 && onEnable && canEdit
   const showDisableButton = enabledCount > 0 && onDisable && canEdit
+  const showSelectAllOption =
+    isAllPageSelected && !isAllSelected && totalCount > selectedCount && onSelectAll
 
   return (
     <motion.div
@@ -42,65 +53,82 @@ export function ActionBar({
       transition={{ duration: 0.2 }}
       className={cn('-translate-x-1/2 fixed bottom-6 left-1/2 z-50 transform', className)}
     >
-      <div className='flex items-center gap-3 rounded-lg border border-gray-200 bg-background px-4 py-2 shadow-sm dark:border-gray-800'>
-        <span className='text-gray-500 text-sm'>{selectedCount} selected</span>
+      <div className='flex items-center gap-[8px] rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)] px-[8px] py-[6px]'>
+        <span className='px-[4px] text-[13px] text-[var(--text-secondary)]'>
+          {isAllSelected ? totalCount : selectedCount} selected
+          {showSelectAllOption && (
+            <>
+              {' · '}
+              <button
+                type='button'
+                onClick={onSelectAll}
+                className='text-[var(--brand-primary)] hover:underline'
+              >
+                Select all
+              </button>
+            </>
+          )}
+          {isAllSelected && onClearSelectAll && (
+            <>
+              {' · '}
+              <button
+                type='button'
+                onClick={onClearSelectAll}
+                className='text-[var(--brand-primary)] hover:underline'
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </span>
 
-        <div className='h-4 w-px bg-gray-200 dark:bg-gray-800' />
-
-        <div className='flex items-center gap-1'>
+        <div className='flex items-center gap-[5px]'>
           {showEnableButton && (
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
                 <Button
                   variant='ghost'
-                  size='sm'
                   onClick={onEnable}
                   disabled={isLoading}
-                  className='text-gray-500 hover:text-gray-700'
+                  className='hover:!text-[var(--text-inverse)] h-[28px] w-[28px] rounded-[8px] bg-[var(--surface-5)] p-0 text-[var(--text-secondary)] hover:bg-[var(--brand-secondary)]'
                 >
-                  <Circle className='h-4 w-4' />
+                  <Circle className='h-[12px] w-[12px]' />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side='top'>
-                Enable {disabledCount > 1 ? `${disabledCount} items` : 'item'}
-              </TooltipContent>
-            </Tooltip>
+              </Tooltip.Trigger>
+              <Tooltip.Content side='top'>Enable</Tooltip.Content>
+            </Tooltip.Root>
           )}
 
           {showDisableButton && (
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
                 <Button
                   variant='ghost'
-                  size='sm'
                   onClick={onDisable}
                   disabled={isLoading}
-                  className='text-gray-500 hover:text-gray-700'
+                  className='hover:!text-[var(--text-inverse)] h-[28px] w-[28px] rounded-[8px] bg-[var(--surface-5)] p-0 text-[var(--text-secondary)] hover:bg-[var(--brand-secondary)]'
                 >
-                  <CircleOff className='h-4 w-4' />
+                  <CircleOff className='h-[12px] w-[12px]' />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side='top'>
-                Disable {enabledCount > 1 ? `${enabledCount} items` : 'item'}
-              </TooltipContent>
-            </Tooltip>
+              </Tooltip.Trigger>
+              <Tooltip.Content side='top'>Disable</Tooltip.Content>
+            </Tooltip.Root>
           )}
 
           {onDelete && canEdit && (
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
                 <Button
                   variant='ghost'
-                  size='sm'
                   onClick={onDelete}
                   disabled={isLoading}
-                  className='text-gray-500 hover:text-red-600'
+                  className='hover:!text-[var(--text-inverse)] h-[28px] w-[28px] rounded-[8px] bg-[var(--surface-5)] p-0 text-[var(--text-secondary)] hover:bg-[var(--brand-secondary)]'
                 >
-                  <Trash2 className='h-4 w-4' />
+                  <Trash2 className='h-[12px] w-[12px]' />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side='top'>Delete items</TooltipContent>
-            </Tooltip>
+              </Tooltip.Trigger>
+              <Tooltip.Content side='top'>Delete</Tooltip.Content>
+            </Tooltip.Root>
           )}
         </div>
       </div>

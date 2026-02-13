@@ -1,20 +1,21 @@
 'use client'
 
-import { isHosted } from '@/lib/environment'
+import { isHosted } from '@/lib/core/config/feature-flags'
+import { soehne } from '@/app/_styles/fonts/soehne/soehne'
 import Footer from '@/app/(landing)/components/footer/footer'
 import Nav from '@/app/(landing)/components/nav/nav'
-import { soehne } from '@/app/fonts/soehne/soehne'
 
 interface LegalLayoutProps {
   title: string
   children: React.ReactNode
+  navVariant?: 'landing' | 'auth' | 'legal'
 }
 
-export default function LegalLayout({ title, children }: LegalLayoutProps) {
+export default function LegalLayout({ title, children, navVariant = 'legal' }: LegalLayoutProps) {
   return (
     <main className={`${soehne.className} min-h-screen bg-white text-gray-900`}>
       {/* Header - Nav handles all conditional logic */}
-      <Nav variant='legal' />
+      <Nav variant={navVariant} />
 
       {/* Content */}
       <div className='px-12 pt-[40px] pb-[40px]'>

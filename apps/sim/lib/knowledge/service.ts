@@ -1,14 +1,14 @@
 import { randomUUID } from 'crypto'
 import { db } from '@sim/db'
 import { document, knowledgeBase, permissions } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { and, count, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import type {
   ChunkingConfig,
   CreateKnowledgeBaseData,
   KnowledgeBaseWithCounts,
 } from '@/lib/knowledge/types'
-import { createLogger } from '@/lib/logs/console/logger'
-import { getUserEntityPermissions } from '@/lib/permissions/utils'
+import { getUserEntityPermissions } from '@/lib/workspaces/permissions/utils'
 
 const logger = createLogger('KnowledgeBaseService')
 
@@ -86,18 +86,16 @@ export async function createKnowledgeBase(
   const kbId = randomUUID()
   const now = new Date()
 
-  if (data.workspaceId) {
-    const hasPermission = await getUserEntityPermissions(data.userId, 'workspace', data.workspaceId)
-    if (hasPermission === null) {
-      throw new Error('User does not have permission to create knowledge bases in this workspace')
-    }
+  const hasPermission = await getUserEntityPermissions(data.userId, 'workspace', data.workspaceId)
+  if (hasPermission !== 'admin' && hasPermission !== 'write') {
+    throw new Error('User does not have permission to create knowledge bases in this workspace')
   }
 
   const newKnowledgeBase = {
     id: kbId,
     name: data.name,
     description: data.description ?? null,
-    workspaceId: data.workspaceId ?? null,
+    workspaceId: data.workspaceId,
     userId: data.userId,
     tokenCount: 0,
     embeddingModel: data.embeddingModel,
@@ -122,7 +120,7 @@ export async function createKnowledgeBase(
     chunkingConfig: data.chunkingConfig,
     createdAt: now,
     updatedAt: now,
-    workspaceId: data.workspaceId ?? null,
+    workspaceId: data.workspaceId,
     docCount: 0,
   }
 }
@@ -135,6 +133,7 @@ export async function updateKnowledgeBase(
   updates: {
     name?: string
     description?: string
+    workspaceId?: string | null
     chunkingConfig?: {
       maxSize: number
       minSize: number
@@ -148,6 +147,7 @@ export async function updateKnowledgeBase(
     updatedAt: Date
     name?: string
     description?: string | null
+    workspaceId?: string | null
     chunkingConfig?: {
       maxSize: number
       minSize: number
@@ -161,6 +161,7 @@ export async function updateKnowledgeBase(
 
   if (updates.name !== undefined) updateData.name = updates.name
   if (updates.description !== undefined) updateData.description = updates.description
+  if (updates.workspaceId !== undefined) updateData.workspaceId = updates.workspaceId
   if (updates.chunkingConfig !== undefined) {
     updateData.chunkingConfig = updates.chunkingConfig
     updateData.embeddingModel = 'text-embedding-3-small'

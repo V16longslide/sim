@@ -1,13 +1,14 @@
 import { QdrantIcon } from '@/components/icons'
 import type { BlockConfig } from '@/blocks/types'
+import { AuthMode } from '@/blocks/types'
 import type { QdrantResponse } from '@/tools/qdrant/types'
 
 export const QdrantBlock: BlockConfig<QdrantResponse> = {
   type: 'qdrant',
   name: 'Qdrant',
   description: 'Use Qdrant vector database',
-  longDescription:
-    'Integrate Qdrant into the workflow. Can upsert, search, and fetch points. Requires API Key.',
+  authMode: AuthMode.ApiKey,
+  longDescription: 'Integrate Qdrant into the workflow. Can upsert, search, and fetch points.',
   docsLink: 'https://qdrant.tech/documentation/',
   category: 'tools',
   bgColor: '#1A223F',
@@ -18,7 +19,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'operation',
       title: 'Operation',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'Upsert', id: 'upsert' },
         { label: 'Search', id: 'search' },
@@ -31,7 +31,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'url',
       title: 'Qdrant URL',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'http://localhost:6333',
       condition: { field: 'operation', value: 'upsert' },
       required: true,
@@ -40,7 +39,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'collection',
       title: 'Collection',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'my-collection',
       condition: { field: 'operation', value: 'upsert' },
       required: true,
@@ -49,17 +47,40 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'points',
       title: 'Points',
       type: 'long-input',
-      layout: 'full',
       placeholder: '[{"id": 1, "vector": [0.1, 0.2], "payload": {"category": "a"}}]',
       condition: { field: 'operation', value: 'upsert' },
       required: true,
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate a JSON array of Qdrant points for vector database upsert based on the user's description.
+
+### CONTEXT
+{context}
+
+### GUIDELINES
+- Return ONLY a valid JSON array starting with [ and ending with ]
+- Each point must have: id (number or string UUID), vector (array of floats)
+- Optional: payload (object with metadata)
+- Vector dimensions must match the collection's configuration
+
+### EXAMPLE
+User: "Create 2 points for product embeddings with category and price"
+Output:
+[
+  {"id": 1, "vector": [0.1, 0.2, 0.3], "payload": {"category": "electronics", "price": 299.99}},
+  {"id": 2, "vector": [0.4, 0.5, 0.6], "payload": {"category": "clothing", "price": 49.99}}
+]
+
+Return ONLY the JSON array.`,
+        placeholder: 'Describe the points to upsert...',
+        generationType: 'json-object',
+      },
     },
     // Search fields
     {
       id: 'url',
       title: 'Qdrant URL',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'http://localhost:6333',
       condition: { field: 'operation', value: 'search' },
       required: true,
@@ -68,7 +89,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'collection',
       title: 'Collection',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'my-collection',
       condition: { field: 'operation', value: 'search' },
       required: true,
@@ -77,7 +97,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'vector',
       title: 'Query Vector',
       type: 'long-input',
-      layout: 'full',
       placeholder: '[0.1, 0.2]',
       condition: { field: 'operation', value: 'search' },
       required: true,
@@ -86,7 +105,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'limit',
       title: 'Limit',
       type: 'short-input',
-      layout: 'full',
       placeholder: '10',
       condition: { field: 'operation', value: 'search' },
     },
@@ -94,22 +112,48 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'filter',
       title: 'Filter',
       type: 'long-input',
-      layout: 'full',
       placeholder: '{"must":[{"key":"city","match":{"value":"London"}}]}',
       condition: { field: 'operation', value: 'search' },
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate a Qdrant filter JSON object based on the user's description.
+
+### CONTEXT
+{context}
+
+### GUIDELINES
+- Return ONLY a valid JSON object starting with { and ending with }
+- Use Qdrant filter syntax with "must", "should", or "must_not" arrays
+- Each condition has: key (field name), match/range/geo (condition type)
+- Match types: value (exact), text (full-text), any (array contains)
+- Range types: gt, gte, lt, lte
+
+### EXAMPLE
+User: "Filter for products in electronics category with price under 500"
+Output:
+{
+  "must": [
+    {"key": "category", "match": {"value": "electronics"}},
+    {"key": "price", "range": {"lt": 500}}
+  ]
+}
+
+Return ONLY the JSON object.`,
+        placeholder: 'Describe the filter conditions...',
+        generationType: 'json-object',
+      },
     },
     {
-      id: 'with_payload',
-      title: 'With Payload',
-      type: 'switch',
-      layout: 'full',
-      condition: { field: 'operation', value: 'search' },
-    },
-    {
-      id: 'with_vector',
-      title: 'With Vector',
-      type: 'switch',
-      layout: 'full',
+      id: 'search_return_data',
+      title: 'Return Data',
+      type: 'dropdown',
+      options: [
+        { label: 'Payload Only', id: 'payload_only' },
+        { label: 'Vector Only', id: 'vector_only' },
+        { label: 'Both Payload and Vector', id: 'both' },
+        { label: 'None (IDs and scores only)', id: 'none' },
+      ],
+      value: () => 'payload_only',
       condition: { field: 'operation', value: 'search' },
     },
     // Fetch fields
@@ -117,7 +161,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'url',
       title: 'Qdrant URL',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'http://localhost:6333',
       condition: { field: 'operation', value: 'fetch' },
       required: true,
@@ -126,7 +169,6 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'collection',
       title: 'Collection',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'my-collection',
       condition: { field: 'operation', value: 'fetch' },
       required: true,
@@ -135,30 +177,27 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
       id: 'ids',
       title: 'IDs',
       type: 'long-input',
-      layout: 'full',
       placeholder: '["370446a3-310f-58db-8ce7-31db947c6c1e"]',
       condition: { field: 'operation', value: 'fetch' },
       required: true,
     },
     {
-      id: 'with_payload',
-      title: 'With Payload',
-      type: 'switch',
-      layout: 'full',
-      condition: { field: 'operation', value: 'fetch' },
-    },
-    {
-      id: 'with_vector',
-      title: 'With Vector',
-      type: 'switch',
-      layout: 'full',
+      id: 'fetch_return_data',
+      title: 'Return Data',
+      type: 'dropdown',
+      options: [
+        { label: 'Payload Only', id: 'payload_only' },
+        { label: 'Vector Only', id: 'vector_only' },
+        { label: 'Both Payload and Vector', id: 'both' },
+        { label: 'None (IDs only)', id: 'none' },
+      ],
+      value: () => 'payload_only',
       condition: { field: 'operation', value: 'fetch' },
     },
     {
       id: 'apiKey',
       title: 'API Key',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Your Qdrant API key (optional)',
       password: true,
       required: true,
@@ -193,6 +232,8 @@ export const QdrantBlock: BlockConfig<QdrantResponse> = {
     limit: { type: 'number', description: 'Result limit' },
     filter: { type: 'json', description: 'Search filter' },
     ids: { type: 'json', description: 'Point identifiers' },
+    search_return_data: { type: 'string', description: 'Data to return from search' },
+    fetch_return_data: { type: 'string', description: 'Data to return from fetch' },
     with_payload: { type: 'boolean', description: 'Include payload' },
     with_vector: { type: 'boolean', description: 'Include vectors' },
   },

@@ -1,6 +1,6 @@
 ---
 title: Telegram
-description: Send messages through Telegram or trigger workflows from Telegram events
+description: Interact with Telegram
 ---
 
 import { BlockInfoCard } from "@/components/ui/block-info-card"
@@ -8,21 +8,6 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="telegram"
   color="#E0E0E0"
-  icon={true}
-  iconSvg={`<svg className="block-icon"
-      
-      xmlns='http://www.w3.org/2000/svg'
-      viewBox='0 0 24 24'
-      
-      
-      fill='none'
-    >
-      <circle cx='12' cy='12' r='10' fill='#0088CC' />
-      <path
-        d='M16.7 8.4c.1-.6-.4-1.1-1-.8l-9.8 4.3c-.4.2-.4.8.1.9l2.1.7c.4.1.8.1 1.1-.2l4.5-3.1c.1-.1.3.1.2.2l-3.2 3.5c-.3.3-.2.8.2 1l3.6 2.3c.4.2.9-.1 1-.5l1.2-7.8Z'
-        fill='white'
-      />
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
@@ -67,7 +52,7 @@ In Sim, the Telegram integration enables your agents to leverage these powerful 
 
 ## Usage Instructions
 
-Integrate Telegram into the workflow. Can send messages. Can be used in trigger mode to trigger a workflow when a message is sent to a chat.
+Integrate Telegram into the workflow. Can send and delete messages. Can be used in trigger mode to trigger a workflow when a message is sent to a chat.
 
 
 
@@ -82,23 +67,312 @@ Send messages to Telegram channels or users through the Telegram Bot API. Enable
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
 | `botToken` | string | Yes | Your Telegram Bot API Token |
-| `chatId` | string | Yes | Target Telegram chat ID |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
 | `text` | string | Yes | Message text to send |
 
 #### Output
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `success` | boolean | Telegram message send success status |
-| `messageId` | number | Unique Telegram message identifier |
-| `chatId` | string | Target chat ID where message was sent |
-| `text` | string | Text content of the sent message |
-| `timestamp` | number | Unix timestamp when message was sent |
-| `from` | object | Information about the bot that sent the message |
+| `message` | string | Success or error message |
+| `data` | object | Telegram message data |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Chat information |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Chat username \(if available\) |
+|     ↳ `username` | string | Chat title \(for groups and channels\) |
+|   ↳ `chat` | object | Information about the bot that sent the message |
+|     ↳ `id` | number | Bot user ID |
+|     ↳ `first_name` | string | Bot first name |
+|     ↳ `username` | string | Bot username |
+|     ↳ `type` | string | chat type private or channel |
+|   ↳ `date` | number | Unix timestamp when message was sent |
+|   ↳ `text` | string | Text content of the sent message |
+
+### `telegram_delete_message`
+
+Delete messages in Telegram channels or chats through the Telegram Bot API. Requires the message ID of the message to delete.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `messageId` | string | Yes | Telegram message ID \(numeric identifier of the message to delete\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `data` | object | Delete operation result |
+|   ↳ `ok` | boolean | API response success status |
+|   ↳ `deleted` | boolean | Whether the message was successfully deleted |
+
+### `telegram_send_photo`
+
+Send photos to Telegram channels or users through the Telegram Bot API.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `photo` | string | Yes | Photo to send. Pass a file_id or HTTP URL |
+| `caption` | string | No | Photo caption \(optional\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `data` | object | Telegram message data including optional photo\(s\) |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Chat information |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Chat username \(if available\) |
+|     ↳ `username` | string | Chat title \(for groups and channels\) |
+|   ↳ `chat` | object | Information about the bot that sent the message |
+|     ↳ `id` | number | Bot user ID |
+|     ↳ `first_name` | string | Bot first name |
+|     ↳ `username` | string | Bot username |
+|     ↳ `type` | string | Chat type \(private, group, supergroup, channel\) |
+|   ↳ `date` | number | Unix timestamp when message was sent |
+|   ↳ `text` | string | Text content of the sent message \(if applicable\) |
+|   ↳ `photo` | array | List of photos included in the message |
+|     ↳ `file_id` | string | Unique file ID of the photo |
+|     ↳ `file_unique_id` | string | Unique identifier for this file across different bots |
+|     ↳ `file_size` | number | Size of the photo file in bytes |
+|     ↳ `width` | number | Photo width in pixels |
+|     ↳ `height` | number | Photo height in pixels |
+
+### `telegram_send_video`
+
+Send videos to Telegram channels or users through the Telegram Bot API.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `video` | string | Yes | Video to send. Pass a file_id or HTTP URL |
+| `caption` | string | No | Video caption \(optional\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `data` | object | Telegram message data including optional media |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Information about the sender |
+|     ↳ `id` | number | Sender ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Sender's first name \(if available\) |
+|     ↳ `username` | string | Sender's username \(if available\) |
+|   ↳ `chat` | object | Information about the chat where message was sent |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `first_name` | string | Chat first name \(if private chat\) |
+|     ↳ `username` | string | Chat username \(for private or channels\) |
+|     ↳ `type` | string | Type of chat \(private, group, supergroup, or channel\) |
+|   ↳ `date` | number | Unix timestamp when the message was sent |
+|   ↳ `text` | string | Text content of the sent message \(if applicable\) |
+|   ↳ `format` | object | Media format information \(for videos, GIFs, etc.\) |
+|     ↳ `file_name` | string | Media file name |
+|     ↳ `mime_type` | string | Media MIME type |
+|     ↳ `duration` | number | Duration of media in seconds |
+|     ↳ `width` | number | Media width in pixels |
+|     ↳ `height` | number | Media height in pixels |
+|     ↳ `thumbnail` | object | Thumbnail image details |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `thumb` | object | Secondary thumbnail details \(duplicate of thumbnail\) |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `file_id` | string | Media file ID |
+|     ↳ `file_unique_id` | string | Unique media file identifier |
+|     ↳ `file_size` | number | Size of media file in bytes |
+|   ↳ `document` | object | Document file details if the message contains a document |
+|     ↳ `file_name` | string | Document file name |
+|     ↳ `mime_type` | string | Document MIME type |
+|     ↳ `thumbnail` | object | Document thumbnail information |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `thumb` | object | Duplicate thumbnail info \(used for compatibility\) |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `file_id` | string | Document file ID |
+|     ↳ `file_unique_id` | string | Unique document file identifier |
+|     ↳ `file_size` | number | Size of document file in bytes |
+
+### `telegram_send_audio`
+
+Send audio files to Telegram channels or users through the Telegram Bot API.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `audio` | string | Yes | Audio file to send. Pass a file_id or HTTP URL |
+| `caption` | string | No | Audio caption \(optional\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `data` | object | Telegram message data including voice/audio information |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Information about the sender |
+|     ↳ `id` | number | Sender ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Sender's first name \(if available\) |
+|     ↳ `username` | string | Sender's username \(if available\) |
+|   ↳ `chat` | object | Information about the chat where the message was sent |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `first_name` | string | Chat first name \(if private chat\) |
+|     ↳ `username` | string | Chat username \(for private or channels\) |
+|     ↳ `type` | string | Type of chat \(private, group, supergroup, or channel\) |
+|   ↳ `date` | number | Unix timestamp when the message was sent |
+|   ↳ `text` | string | Text content of the sent message \(if applicable\) |
+|   ↳ `audio` | object | Audio file details |
+|     ↳ `duration` | number | Duration of the audio in seconds |
+|     ↳ `performer` | string | Performer of the audio |
+|     ↳ `title` | string | Title of the audio |
+|     ↳ `file_name` | string | Original filename of the audio |
+|     ↳ `mime_type` | string | MIME type of the audio file |
+|     ↳ `file_id` | string | Unique file identifier for this audio |
+|     ↳ `file_unique_id` | string | Unique identifier across different bots for this file |
+|     ↳ `file_size` | number | Size of the audio file in bytes |
+
+### `telegram_send_animation`
+
+Send animations (GIFs) to Telegram channels or users through the Telegram Bot API.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `animation` | string | Yes | Animation to send. Pass a file_id or HTTP URL |
+| `caption` | string | No | Animation caption \(optional\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `data` | object | Telegram message data including optional media |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Information about the sender |
+|     ↳ `id` | number | Sender ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Sender's first name \(if available\) |
+|     ↳ `username` | string | Sender's username \(if available\) |
+|   ↳ `chat` | object | Information about the chat where message was sent |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `first_name` | string | Chat first name \(if private chat\) |
+|     ↳ `username` | string | Chat username \(for private or channels\) |
+|     ↳ `type` | string | Type of chat \(private, group, supergroup, or channel\) |
+|   ↳ `date` | number | Unix timestamp when the message was sent |
+|   ↳ `text` | string | Text content of the sent message \(if applicable\) |
+|   ↳ `format` | object | Media format information \(for videos, GIFs, etc.\) |
+|     ↳ `file_name` | string | Media file name |
+|     ↳ `mime_type` | string | Media MIME type |
+|     ↳ `duration` | number | Duration of media in seconds |
+|     ↳ `width` | number | Media width in pixels |
+|     ↳ `height` | number | Media height in pixels |
+|     ↳ `thumbnail` | object | Thumbnail image details |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `thumb` | object | Secondary thumbnail details \(duplicate of thumbnail\) |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `file_id` | string | Media file ID |
+|     ↳ `file_unique_id` | string | Unique media file identifier |
+|     ↳ `file_size` | number | Size of media file in bytes |
+|   ↳ `document` | object | Document file details if the message contains a document |
+|     ↳ `file_name` | string | Document file name |
+|     ↳ `mime_type` | string | Document MIME type |
+|     ↳ `thumbnail` | object | Document thumbnail information |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `thumb` | object | Duplicate thumbnail info \(used for compatibility\) |
+|       ↳ `file_id` | string | Thumbnail file ID |
+|       ↳ `file_unique_id` | string | Unique thumbnail file identifier |
+|       ↳ `file_size` | number | Thumbnail file size in bytes |
+|       ↳ `width` | number | Thumbnail width in pixels |
+|       ↳ `height` | number | Thumbnail height in pixels |
+|     ↳ `file_id` | string | Document file ID |
+|     ↳ `file_unique_id` | string | Unique document file identifier |
+|     ↳ `file_size` | number | Size of document file in bytes |
+
+### `telegram_send_document`
+
+Send documents (PDF, ZIP, DOC, etc.) to Telegram channels or users through the Telegram Bot API.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `botToken` | string | Yes | Your Telegram Bot API Token |
+| `chatId` | string | Yes | Telegram chat ID \(numeric, can be negative for groups\) |
+| `files` | file[] | No | Document file to send \(PDF, ZIP, DOC, etc.\). Max size: 50MB |
+| `caption` | string | No | Document caption \(optional\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | string | Success or error message |
+| `files` | file[] | Files attached to the message |
+| `data` | object | Telegram message data including document |
+|   ↳ `message_id` | number | Unique Telegram message identifier |
+|   ↳ `from` | object | Information about the sender |
+|     ↳ `id` | number | Sender ID |
+|     ↳ `is_bot` | boolean | Whether the chat is a bot or not |
+|     ↳ `first_name` | string | Sender's first name \(if available\) |
+|     ↳ `username` | string | Sender's username \(if available\) |
+|   ↳ `chat` | object | Information about the chat where message was sent |
+|     ↳ `id` | number | Chat ID |
+|     ↳ `first_name` | string | Chat first name \(if private chat\) |
+|     ↳ `username` | string | Chat username \(for private or channels\) |
+|     ↳ `type` | string | Type of chat \(private, group, supergroup, or channel\) |
+|   ↳ `date` | number | Unix timestamp when the message was sent |
+|   ↳ `document` | object | Document file details |
+|     ↳ `file_name` | string | Document file name |
+|     ↳ `mime_type` | string | Document MIME type |
+|     ↳ `file_id` | string | Document file ID |
+|     ↳ `file_unique_id` | string | Unique document file identifier |
+|     ↳ `file_size` | number | Size of document file in bytes |
 
 
-
-## Notes
-
-- Category: `tools`
-- Type: `telegram`

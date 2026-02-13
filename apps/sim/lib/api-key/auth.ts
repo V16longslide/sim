@@ -1,3 +1,4 @@
+import { createLogger } from '@sim/logger'
 import {
   decryptApiKey,
   encryptApiKey,
@@ -5,9 +6,8 @@ import {
   generateEncryptedApiKey,
   isEncryptedApiKeyFormat,
   isLegacyApiKeyFormat,
-} from '@/lib/api-key/service'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
+} from '@/lib/api-key/crypto'
+import { env } from '@/lib/core/config/env'
 
 const logger = createLogger('ApiKeyAuth')
 

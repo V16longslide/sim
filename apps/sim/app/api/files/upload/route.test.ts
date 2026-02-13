@@ -1,15 +1,86 @@
-import { NextRequest } from 'next/server'
 /**
  * Tests for file upload API route
  *
  * @vitest-environment node
  */
+import { mockAuth, mockCryptoUuid, mockUuid, setupCommonApiMocks } from '@sim/testing'
+import { NextRequest } from 'next/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setupFileApiMocks } from '@/app/api/__test-utils__/utils'
+
+function setupFileApiMocks(
+  options: {
+    authenticated?: boolean
+    storageProvider?: 's3' | 'blob' | 'local'
+    cloudEnabled?: boolean
+  } = {}
+) {
+  const { authenticated = true, storageProvider = 's3', cloudEnabled = true } = options
+
+  setupCommonApiMocks()
+  mockUuid()
+  mockCryptoUuid()
+
+  const authMocks = mockAuth()
+  if (authenticated) {
+    authMocks.setAuthenticated()
+  } else {
+    authMocks.setUnauthenticated()
+  }
+
+  vi.doMock('@/lib/auth/hybrid', () => ({
+    checkHybridAuth: vi.fn().mockResolvedValue({
+      success: authenticated,
+      userId: authenticated ? 'test-user-id' : undefined,
+      error: authenticated ? undefined : 'Unauthorized',
+    }),
+  }))
+
+  vi.doMock('@/app/api/files/authorization', () => ({
+    verifyFileAccess: vi.fn().mockResolvedValue(true),
+    verifyWorkspaceFileAccess: vi.fn().mockResolvedValue(true),
+    verifyKBFileAccess: vi.fn().mockResolvedValue(true),
+    verifyCopilotFileAccess: vi.fn().mockResolvedValue(true),
+  }))
+
+  vi.doMock('@/lib/workspaces/permissions/utils', () => ({
+    getUserEntityPermissions: vi.fn().mockResolvedValue('admin'),
+  }))
+
+  vi.doMock('@/lib/uploads/contexts/workspace', () => ({
+    uploadWorkspaceFile: vi.fn().mockResolvedValue({
+      id: 'test-file-id',
+      name: 'test.txt',
+      url: '/api/files/serve/workspace/test-workspace-id/test-file.txt',
+      size: 100,
+      type: 'text/plain',
+      key: 'workspace/test-workspace-id/1234567890-test.txt',
+      uploadedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }),
+  }))
+
+  const uploadFileMock = vi.fn().mockResolvedValue({
+    path: '/api/files/serve/test-key.txt',
+    key: 'test-key.txt',
+    name: 'test.txt',
+    size: 100,
+    type: 'text/plain',
+  })
+
+  vi.doMock('@/lib/uploads', () => ({
+    getStorageProvider: vi.fn().mockReturnValue(storageProvider),
+    isUsingCloudStorage: vi.fn().mockReturnValue(cloudEnabled),
+    uploadFile: uploadFileMock,
+  }))
+
+  return { auth: authMocks }
+}
 
 describe('File Upload API Route', () => {
-  const createMockFormData = (files: File[]): FormData => {
+  const createMockFormData = (files: File[], context = 'workspace'): FormData => {
     const formData = new FormData()
+    formData.append('context', context)
+    formData.append('workspaceId', 'test-workspace-id')
     files.forEach((file) => {
       formData.append('file', file)
     })
@@ -54,22 +125,16 @@ describe('File Upload API Route', () => {
     const response = await POST(req)
     const data = await response.json()
 
-    // Log error details if test fails
-    if (response.status !== 200) {
-      console.error('Upload failed with status:', response.status)
-      console.error('Error response:', data)
-    }
-
     expect(response.status).toBe(200)
-    expect(data).toHaveProperty('path')
-    expect(data.path).toMatch(/\/api\/files\/serve\/.*\.txt$/)
+    expect(data).toHaveProperty('url')
+    expect(data.url).toMatch(/\/api\/files\/serve\/.*\.txt$/)
     expect(data).toHaveProperty('name', 'test.txt')
     expect(data).toHaveProperty('size')
     expect(data).toHaveProperty('type', 'text/plain')
+    expect(data).toHaveProperty('key')
 
-    // Verify the upload function was called (we're mocking at the uploadFile level)
-    const { uploadFile } = await import('@/lib/uploads')
-    expect(uploadFile).toHaveBeenCalled()
+    const { uploadWorkspaceFile } = await import('@/lib/uploads/contexts/workspace')
+    expect(uploadWorkspaceFile).toHaveBeenCalled()
   })
 
   it('should upload a file to S3 when in S3 mode', async () => {
@@ -92,14 +157,15 @@ describe('File Upload API Route', () => {
     const data = await response.json()
 
     expect(response.status).toBe(200)
-    expect(data).toHaveProperty('path')
-    expect(data.path).toContain('/api/files/serve/')
+    expect(data).toHaveProperty('url')
+    expect(data.url).toContain('/api/files/serve/')
     expect(data).toHaveProperty('name', 'test.txt')
     expect(data).toHaveProperty('size')
     expect(data).toHaveProperty('type', 'text/plain')
+    expect(data).toHaveProperty('key')
 
-    const uploads = await import('@/lib/uploads')
-    expect(uploads.uploadFile).toHaveBeenCalled()
+    const { uploadWorkspaceFile } = await import('@/lib/uploads/contexts/workspace')
+    expect(uploadWorkspaceFile).toHaveBeenCalled()
   })
 
   it('should handle multiple file uploads', async () => {
@@ -148,14 +214,15 @@ describe('File Upload API Route', () => {
   })
 
   it('should handle S3 upload errors', async () => {
+    vi.resetModules()
+
     setupFileApiMocks({
       cloudEnabled: true,
       storageProvider: 's3',
     })
 
-    vi.doMock('@/lib/uploads', () => ({
-      uploadFile: vi.fn().mockRejectedValue(new Error('Upload failed')),
-      isUsingCloudStorage: vi.fn().mockReturnValue(true),
+    vi.doMock('@/lib/uploads/contexts/workspace', () => ({
+      uploadWorkspaceFile: vi.fn().mockRejectedValue(new Error('Storage limit exceeded')),
     }))
 
     const mockFile = createMockFile()
@@ -171,9 +238,11 @@ describe('File Upload API Route', () => {
     const response = await POST(req)
     const data = await response.json()
 
-    expect(response.status).toBe(500)
-    expect(data).toHaveProperty('error', 'Error')
-    expect(data).toHaveProperty('message', 'Upload failed')
+    expect(response.status).toBe(413)
+    expect(data).toHaveProperty('error')
+    expect(typeof data.error).toBe('string')
+
+    vi.resetModules()
   })
 
   it('should handle CORS preflight requests', async () => {
@@ -200,10 +269,21 @@ describe('File Upload Security Tests', () => {
 
     vi.doMock('@/lib/uploads', () => ({
       isUsingCloudStorage: vi.fn().mockReturnValue(false),
+      StorageService: {
+        uploadFile: vi.fn().mockResolvedValue({
+          key: 'test-key',
+          path: '/test/path',
+        }),
+        hasCloudStorage: vi.fn().mockReturnValue(false),
+      },
+    }))
+
+    vi.doMock('@/lib/uploads/core/storage-service', () => ({
       uploadFile: vi.fn().mockResolvedValue({
         key: 'test-key',
         path: '/test/path',
       }),
+      hasCloudStorage: vi.fn().mockReturnValue(false),
     }))
 
     vi.doMock('@/lib/uploads/setup.server', () => ({}))
@@ -214,6 +294,14 @@ describe('File Upload Security Tests', () => {
   })
 
   describe('File Extension Validation', () => {
+    beforeEach(() => {
+      vi.resetModules()
+      setupFileApiMocks({
+        cloudEnabled: false,
+        storageProvider: 'local',
+      })
+    })
+
     it('should accept allowed file types', async () => {
       const allowedTypes = [
         'pdf',
@@ -234,6 +322,8 @@ describe('File Upload Security Tests', () => {
         const formData = new FormData()
         const file = new File(['test content'], `test.${ext}`, { type: 'application/octet-stream' })
         formData.append('file', file)
+        formData.append('context', 'workspace')
+        formData.append('workspaceId', 'test-workspace-id')
 
         const req = new Request('http://localhost/api/files/upload', {
           method: 'POST',
@@ -252,6 +342,29 @@ describe('File Upload Security Tests', () => {
       const maliciousContent = '<script>alert("XSS")</script>'
       const file = new File([maliciousContent], 'malicious.html', { type: 'text/html' })
       formData.append('file', file)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
+
+      const req = new Request('http://localhost/api/files/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const { POST } = await import('@/app/api/files/upload/route')
+      const response = await POST(req as any)
+
+      expect(response.status).toBe(400)
+      const data = await response.json()
+      expect(data.message).toContain("File type 'html' is not allowed")
+    })
+
+    it('should reject HTML files to prevent XSS', async () => {
+      const formData = new FormData()
+      const maliciousContent = '<script>alert("XSS")</script>'
+      const file = new File([maliciousContent], 'malicious.html', { type: 'text/html' })
+      formData.append('file', file)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
 
       const req = new Request('http://localhost/api/files/upload', {
         method: 'POST',
@@ -271,6 +384,8 @@ describe('File Upload Security Tests', () => {
       const maliciousSvg = '<svg onload="alert(\'XSS\')" xmlns="http://www.w3.org/2000/svg"></svg>'
       const file = new File([maliciousSvg], 'malicious.svg', { type: 'image/svg+xml' })
       formData.append('file', file)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
 
       const req = new Request('http://localhost/api/files/upload', {
         method: 'POST',
@@ -290,6 +405,8 @@ describe('File Upload Security Tests', () => {
       const maliciousJs = 'alert("XSS")'
       const file = new File([maliciousJs], 'malicious.js', { type: 'application/javascript' })
       formData.append('file', file)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
 
       const req = new Request('http://localhost/api/files/upload', {
         method: 'POST',
@@ -308,6 +425,8 @@ describe('File Upload Security Tests', () => {
       const formData = new FormData()
       const file = new File(['test content'], 'noextension', { type: 'application/octet-stream' })
       formData.append('file', file)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
 
       const req = new Request('http://localhost/api/files/upload', {
         method: 'POST',
@@ -325,15 +444,15 @@ describe('File Upload Security Tests', () => {
     it('should handle multiple files with mixed valid/invalid types', async () => {
       const formData = new FormData()
 
-      // Valid file
       const validFile = new File(['valid content'], 'valid.pdf', { type: 'application/pdf' })
       formData.append('file', validFile)
 
-      // Invalid file (should cause rejection of entire request)
       const invalidFile = new File(['<script>alert("XSS")</script>'], 'malicious.html', {
         type: 'text/html',
       })
       formData.append('file', invalidFile)
+      formData.append('context', 'workspace')
+      formData.append('workspaceId', 'test-workspace-id')
 
       const req = new Request('http://localhost/api/files/upload', {
         method: 'POST',

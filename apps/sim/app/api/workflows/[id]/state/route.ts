@@ -1,14 +1,18 @@
 import { db } from '@sim/db'
 import { workflow } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getSession } from '@/lib/auth'
-import { createLogger } from '@/lib/logs/console/logger'
-import { getUserEntityPermissions } from '@/lib/permissions/utils'
-import { generateRequestId } from '@/lib/utils'
-import { saveWorkflowToNormalizedTables } from '@/lib/workflows/db-helpers'
-import { sanitizeAgentToolsInBlocks } from '@/lib/workflows/validation'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { env } from '@/lib/core/config/env'
+import { generateRequestId } from '@/lib/core/utils/request'
+import { extractAndPersistCustomTools } from '@/lib/workflows/persistence/custom-tools-persistence'
+import { saveWorkflowToNormalizedTables } from '@/lib/workflows/persistence/utils'
+import { sanitizeAgentToolsInBlocks } from '@/lib/workflows/sanitization/validation'
+import { authorizeWorkflowByWorkspacePermission } from '@/lib/workflows/utils'
+import type { BlockState } from '@/stores/workflows/workflow/types'
+import { generateLoopBlocks, generateParallelBlocks } from '@/stores/workflows/workflow/utils'
 
 const logger = createLogger('WorkflowStateAPI')
 
@@ -24,9 +28,12 @@ const BlockDataSchema = z.object({
   height: z.number().optional(),
   collection: z.unknown().optional(),
   count: z.number().optional(),
-  loopType: z.enum(['for', 'forEach']).optional(),
+  loopType: z.enum(['for', 'forEach', 'while', 'doWhile']).optional(),
+  whileCondition: z.string().optional(),
+  doWhileCondition: z.string().optional(),
   parallelType: z.enum(['collection', 'count']).optional(),
   type: z.string().optional(),
+  canonicalModes: z.record(z.enum(['basic', 'advanced'])).optional(),
 })
 
 const SubBlockStateSchema = z.object({
@@ -46,7 +53,6 @@ const BlockStateSchema = z.object({
   outputs: z.record(BlockOutputSchema),
   enabled: z.boolean(),
   horizontalHandles: z.boolean().optional(),
-  isWide: z.boolean().optional(),
   height: z.number().optional(),
   advancedMode: z.boolean().optional(),
   triggerMode: z.boolean().optional(),
@@ -77,8 +83,10 @@ const LoopSchema = z.object({
   id: z.string(),
   nodes: z.array(z.string()),
   iterations: z.number(),
-  loopType: z.enum(['for', 'forEach']),
+  loopType: z.enum(['for', 'forEach', 'while', 'doWhile']),
   forEachItems: z.union([z.array(z.any()), z.record(z.any()), z.string()]).optional(),
+  whileCondition: z.string().optional(),
+  doWhileCondition: z.string().optional(),
 })
 
 const ParallelSchema = z.object({
@@ -89,13 +97,6 @@ const ParallelSchema = z.object({
   parallelType: z.enum(['count', 'collection']).optional(),
 })
 
-const DeploymentStatusSchema = z.object({
-  id: z.string(),
-  status: z.enum(['deploying', 'deployed', 'failed', 'stopping', 'stopped']),
-  deployedAt: z.date().optional(),
-  error: z.string().optional(),
-})
-
 const WorkflowStateSchema = z.object({
   blocks: z.record(BlockStateSchema),
   edges: z.array(EdgeSchema),
@@ -103,9 +104,8 @@ const WorkflowStateSchema = z.object({
   parallels: z.record(ParallelSchema).optional(),
   lastSaved: z.number().optional(),
   isDeployed: z.boolean().optional(),
-  deployedAt: z.date().optional(),
-  deploymentStatuses: z.record(DeploymentStatusSchema).optional(),
-  hasActiveWebhook: z.boolean().optional(),
+  deployedAt: z.coerce.date().optional(),
+  variables: z.any().optional(), // Workflow variables
 })
 
 /**
@@ -118,56 +118,38 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   const { id: workflowId } = await params
 
   try {
-    // Get the session
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized state update attempt for workflow ${workflowId}`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const userId = session.user.id
-
-    // Parse and validate request body
     const body = await request.json()
     const state = WorkflowStateSchema.parse(body)
 
-    // Fetch the workflow to check ownership/access
-    const workflowData = await db
-      .select()
-      .from(workflow)
-      .where(eq(workflow.id, workflowId))
-      .then((rows) => rows[0])
+    const authorization = await authorizeWorkflowByWorkspacePermission({
+      workflowId,
+      userId,
+      action: 'write',
+    })
+    const workflowData = authorization.workflow
 
     if (!workflowData) {
       logger.warn(`[${requestId}] Workflow ${workflowId} not found for state update`)
       return NextResponse.json({ error: 'Workflow not found' }, { status: 404 })
     }
 
-    // Check if user has permission to update this workflow
-    let canUpdate = false
-
-    // Case 1: User owns the workflow
-    if (workflowData.userId === userId) {
-      canUpdate = true
-    }
-
-    // Case 2: Workflow belongs to a workspace and user has write or admin permission
-    if (!canUpdate && workflowData.workspaceId) {
-      const userPermission = await getUserEntityPermissions(
-        userId,
-        'workspace',
-        workflowData.workspaceId
-      )
-      if (userPermission === 'write' || userPermission === 'admin') {
-        canUpdate = true
-      }
-    }
+    const canUpdate = authorization.allowed
 
     if (!canUpdate) {
       logger.warn(
         `[${requestId}] User ${userId} denied permission to update workflow state ${workflowId}`
       )
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+      return NextResponse.json(
+        { error: authorization.message || 'Access denied' },
+        { status: authorization.status || 403 }
+      )
     }
 
     // Sanitize custom tools in agent blocks before saving
@@ -185,7 +167,6 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             enabled: block.enabled !== undefined ? block.enabled : true,
             horizontalHandles:
               block.horizontalHandles !== undefined ? block.horizontalHandles : true,
-            isWide: block.isWide !== undefined ? block.isWide : false,
             height: block.height !== undefined ? block.height : 0,
             subBlocks: block.subBlocks || {},
             outputs: block.outputs || {},
@@ -196,16 +177,18 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       {} as typeof state.blocks
     )
 
+    const typedBlocks = filteredBlocks as Record<string, BlockState>
+    const canonicalLoops = generateLoopBlocks(typedBlocks)
+    const canonicalParallels = generateParallelBlocks(typedBlocks)
+
     const workflowState = {
       blocks: filteredBlocks,
       edges: state.edges,
-      loops: state.loops || {},
-      parallels: state.parallels || {},
+      loops: canonicalLoops,
+      parallels: canonicalParallels,
       lastSaved: state.lastSaved || Date.now(),
       isDeployed: state.isDeployed || false,
       deployedAt: state.deployedAt,
-      deploymentStatuses: state.deploymentStatuses || {},
-      hasActiveWebhook: state.hasActiveWebhook || false,
     }
 
     const saveResult = await saveWorkflowToNormalizedTables(workflowId, workflowState as any)
@@ -218,17 +201,75 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       )
     }
 
-    // Update workflow's lastSynced timestamp
-    await db
-      .update(workflow)
-      .set({
-        lastSynced: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(workflow.id, workflowId))
+    // Extract and persist custom tools to database
+    try {
+      const workspaceId = workflowData.workspaceId
+      if (workspaceId) {
+        const { saved, errors } = await extractAndPersistCustomTools(
+          workflowState,
+          workspaceId,
+          userId
+        )
+
+        if (saved > 0) {
+          logger.info(`[${requestId}] Persisted ${saved} custom tool(s) to database`, {
+            workflowId,
+          })
+        }
+
+        if (errors.length > 0) {
+          logger.warn(`[${requestId}] Some custom tools failed to persist`, { errors, workflowId })
+        }
+      } else {
+        logger.warn(
+          `[${requestId}] Workflow has no workspaceId, skipping custom tools persistence`,
+          {
+            workflowId,
+          }
+        )
+      }
+    } catch (error) {
+      logger.error(`[${requestId}] Failed to persist custom tools`, { error, workflowId })
+    }
+
+    // Update workflow's lastSynced timestamp and variables if provided
+    const updateData: any = {
+      lastSynced: new Date(),
+      updatedAt: new Date(),
+    }
+
+    // If variables are provided in the state, update them in the workflow record
+    if (state.variables !== undefined) {
+      updateData.variables = state.variables
+    }
+
+    await db.update(workflow).set(updateData).where(eq(workflow.id, workflowId))
 
     const elapsed = Date.now() - startTime
     logger.info(`[${requestId}] Successfully saved workflow ${workflowId} state in ${elapsed}ms`)
+
+    try {
+      const socketUrl = env.SOCKET_SERVER_URL || 'http://localhost:3002'
+      const notifyResponse = await fetch(`${socketUrl}/api/workflow-updated`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': env.INTERNAL_API_SECRET,
+        },
+        body: JSON.stringify({ workflowId }),
+      })
+
+      if (!notifyResponse.ok) {
+        logger.warn(
+          `[${requestId}] Failed to notify Socket.IO server about workflow ${workflowId} update`
+        )
+      }
+    } catch (notificationError) {
+      logger.warn(
+        `[${requestId}] Error notifying Socket.IO server about workflow ${workflowId} update`,
+        notificationError
+      )
+    }
 
     return NextResponse.json({ success: true, warnings }, { status: 200 })
   } catch (error: any) {

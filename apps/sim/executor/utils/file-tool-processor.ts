@@ -1,5 +1,7 @@
-import { createLogger } from '@/lib/logs/console/logger'
-import { uploadExecutionFile } from '@/lib/workflows/execution-file-storage'
+import { createLogger } from '@sim/logger'
+import { isUserFile } from '@/lib/core/utils/user-file'
+import { uploadExecutionFile, uploadFileFromRawData } from '@/lib/uploads/contexts/execution'
+import { downloadFileFromUrl } from '@/lib/uploads/utils/file-utils.server'
 import type { ExecutionContext, UserFile } from '@/executor/types'
 import type { ToolConfig, ToolFileData } from '@/tools/types'
 
@@ -25,7 +27,6 @@ export class FileToolProcessor {
 
     const processedOutput = { ...toolOutput }
 
-    // Process each output that's marked as file or file[]
     for (const [outputKey, outputDef] of Object.entries(toolConfig.outputs)) {
       if (!FileToolProcessor.isFileOutput(outputDef.type)) {
         continue
@@ -73,7 +74,7 @@ export class FileToolProcessor {
     if (outputType === 'file[]') {
       return FileToolProcessor.processFileArray(fileData, outputKey, executionContext)
     }
-    return FileToolProcessor.processFileData(fileData, executionContext, outputKey)
+    return FileToolProcessor.processFileData(fileData, executionContext)
   }
 
   /**
@@ -89,98 +90,95 @@ export class FileToolProcessor {
     }
 
     return Promise.all(
-      fileData.map((file, index) =>
-        FileToolProcessor.processFileData(file, executionContext, `${outputKey}[${index}]`)
-      )
+      fileData.map((file, index) => FileToolProcessor.processFileData(file, executionContext))
     )
   }
 
   /**
-   * Convert various file data formats to UserFile by storing in execution filesystem
+   * Convert various file data formats to UserFile by storing in execution filesystem.
+   * If the input is already a UserFile, returns it unchanged.
    */
   private static async processFileData(
-    fileData: ToolFileData,
-    context: ExecutionContext,
-    outputKey: string
+    fileData: ToolFileData | UserFile,
+    context: ExecutionContext
   ): Promise<UserFile> {
-    logger.info(`Processing file data for output '${outputKey}': ${fileData.name}`)
-    try {
-      // Convert various formats to Buffer
-      let buffer: Buffer
+    // If already a UserFile (e.g., from tools that handle their own file storage),
+    // return it directly without re-processing
+    if (isUserFile(fileData)) {
+      return fileData as UserFile
+    }
 
-      if (Buffer.isBuffer(fileData.data)) {
-        buffer = fileData.data
-        logger.info(`Using Buffer data for ${fileData.name} (${buffer.length} bytes)`)
+    const data = fileData as ToolFileData
+    try {
+      let buffer: Buffer | null = null
+
+      if (Buffer.isBuffer(data.data)) {
+        buffer = data.data
       } else if (
-        fileData.data &&
-        typeof fileData.data === 'object' &&
-        'type' in fileData.data &&
-        'data' in fileData.data
+        data.data &&
+        typeof data.data === 'object' &&
+        'type' in data.data &&
+        'data' in data.data
       ) {
-        // Handle serialized Buffer objects (from JSON serialization)
-        const serializedBuffer = fileData.data as { type: string; data: number[] }
+        const serializedBuffer = data.data as { type: string; data: number[] }
         if (serializedBuffer.type === 'Buffer' && Array.isArray(serializedBuffer.data)) {
           buffer = Buffer.from(serializedBuffer.data)
         } else {
-          throw new Error(`Invalid serialized buffer format for ${fileData.name}`)
+          throw new Error(`Invalid serialized buffer format for ${data.name}`)
         }
-        logger.info(
-          `Converted serialized Buffer to Buffer for ${fileData.name} (${buffer.length} bytes)`
-        )
-      } else if (typeof fileData.data === 'string' && fileData.data) {
-        // Assume base64 or base64url
-        let base64Data = fileData.data
+      } else if (typeof data.data === 'string' && data.data) {
+        let base64Data = data.data
 
-        // Convert base64url to base64 if needed (Gmail API format)
-        if (base64Data && (base64Data.includes('-') || base64Data.includes('_'))) {
+        if (base64Data.includes('-') || base64Data.includes('_')) {
           base64Data = base64Data.replace(/-/g, '+').replace(/_/g, '/')
         }
 
         buffer = Buffer.from(base64Data, 'base64')
-        logger.info(
-          `Converted base64 string to Buffer for ${fileData.name} (${buffer.length} bytes)`
-        )
-      } else if (fileData.url) {
-        // Download from URL
-        logger.info(`Downloading file from URL: ${fileData.url}`)
-        const response = await fetch(fileData.url)
+      }
 
-        if (!response.ok) {
-          throw new Error(`Failed to download file from ${fileData.url}: ${response.statusText}`)
+      if (!buffer && data.url) {
+        buffer = await downloadFileFromUrl(data.url)
+      }
+
+      if (buffer) {
+        if (buffer.length === 0) {
+          throw new Error(`File '${data.name}' has zero bytes`)
         }
 
-        const arrayBuffer = await response.arrayBuffer()
-        buffer = Buffer.from(arrayBuffer)
-        logger.info(`Downloaded file from URL for ${fileData.name} (${buffer.length} bytes)`)
-      } else {
-        throw new Error(
-          `File data for '${fileData.name}' must have either 'data' (Buffer/base64) or 'url' property`
+        return await uploadExecutionFile(
+          {
+            workspaceId: context.workspaceId || '',
+            workflowId: context.workflowId,
+            executionId: context.executionId || '',
+          },
+          buffer,
+          data.name,
+          data.mimeType,
+          context.userId
         )
       }
 
-      // Validate buffer
-      if (buffer.length === 0) {
-        throw new Error(`File '${fileData.name}' has zero bytes`)
+      if (!data.data) {
+        throw new Error(
+          `File data for '${data.name}' must have either 'data' (Buffer/base64) or 'url' property`
+        )
       }
 
-      // Store in execution filesystem
-      const userFile = await uploadExecutionFile(
+      return uploadFileFromRawData(
+        {
+          name: data.name,
+          data: data.data,
+          mimeType: data.mimeType,
+        },
         {
           workspaceId: context.workspaceId || '',
           workflowId: context.workflowId,
           executionId: context.executionId || '',
         },
-        buffer,
-        fileData.name,
-        fileData.mimeType
+        context.userId
       )
-
-      logger.info(
-        `Successfully stored file '${fileData.name}' in execution filesystem with key: ${userFile.key}`
-      )
-      return userFile
     } catch (error) {
-      logger.error(`Error processing file data for '${fileData.name}':`, error)
+      logger.error(`Error processing file data for '${data.name}':`, error)
       throw error
     }
   }

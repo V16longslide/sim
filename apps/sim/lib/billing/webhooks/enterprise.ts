@@ -1,14 +1,11 @@
 import { db } from '@sim/db'
 import { organization, subscription, user } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
-import {
-  getEmailSubject,
-  renderEnterpriseSubscriptionEmail,
-} from '@/components/emails/render-email'
-import { sendEmail } from '@/lib/email/mailer'
-import { getFromEmailAddress } from '@/lib/email/utils'
-import { createLogger } from '@/lib/logs/console/logger'
+import { getEmailSubject, renderEnterpriseSubscriptionEmail } from '@/components/emails'
+import { sendEmail } from '@/lib/messaging/email/mailer'
+import { getFromEmailAddress } from '@/lib/messaging/email/utils'
 import type { EnterpriseSubscriptionMetadata } from '../types'
 
 const logger = createLogger('BillingEnterprise')
@@ -115,7 +112,7 @@ export async function handleManualEnterpriseSubscription(event: Stripe.Event) {
       ? new Date(referenceItem.current_period_end * 1000)
       : null,
     cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end ?? null,
-    seats,
+    seats: 1, // Enterprise uses metadata.seats for actual seat count, column is always 1
     trialStart: stripeSubscription.trial_start
       ? new Date(stripeSubscription.trial_start * 1000)
       : null,
@@ -140,7 +137,7 @@ export async function handleManualEnterpriseSubscription(event: Stripe.Event) {
         periodStart: subscriptionRow.periodStart,
         periodEnd: subscriptionRow.periodEnd,
         cancelAtPeriodEnd: subscriptionRow.cancelAtPeriodEnd,
-        seats: subscriptionRow.seats,
+        seats: 1, // Enterprise uses metadata.seats for actual seat count, column is always 1
         trialStart: subscriptionRow.trialStart,
         trialEnd: subscriptionRow.trialEnd,
         metadata: subscriptionRow.metadata,
@@ -208,7 +205,7 @@ export async function handleManualEnterpriseSubscription(event: Stripe.Event) {
       const user = userDetails[0]
       const org = orgDetails[0]
 
-      const html = await renderEnterpriseSubscriptionEmail(user.name || user.email, user.email)
+      const html = await renderEnterpriseSubscriptionEmail(user.name || user.email)
 
       const emailResult = await sendEmail({
         to: user.email,

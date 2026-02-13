@@ -4,26 +4,32 @@
  *
  * @vitest-environment node
  */
-
-import { NextRequest } from 'next/server'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  createMockDatabase,
+  databaseMock,
+  defaultMockUser,
   mockAuth,
   mockCryptoUuid,
-  mockUser,
   setupCommonApiMocks,
-} from '@/app/api/__test-utils__/utils'
+} from '@sim/testing'
+import { NextRequest } from 'next/server'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('Workflow Variables API Route', () => {
   let authMocks: ReturnType<typeof mockAuth>
-  let databaseMocks: ReturnType<typeof createMockDatabase>
+  const mockAuthorizeWorkflowByWorkspacePermission = vi.fn()
 
   beforeEach(() => {
     vi.resetModules()
     setupCommonApiMocks()
     mockCryptoUuid('mock-request-id-12345678')
-    authMocks = mockAuth(mockUser)
+    authMocks = mockAuth(defaultMockUser)
+    mockAuthorizeWorkflowByWorkspacePermission.mockReset()
+
+    vi.doMock('@sim/db', () => databaseMock)
+
+    vi.doMock('@/lib/workflows/utils', () => ({
+      authorizeWorkflowByWorkspacePermission: mockAuthorizeWorkflowByWorkspacePermission,
+    }))
   })
 
   afterEach(() => {
@@ -37,7 +43,7 @@ describe('Workflow Variables API Route', () => {
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(401)
@@ -47,14 +53,18 @@ describe('Workflow Variables API Route', () => {
 
     it('should return 404 when workflow does not exist', async () => {
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[]] }, // No workflow found
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: false,
+        status: 404,
+        message: 'Workflow not found',
+        workflow: null,
+        workspacePermission: null,
       })
 
       const req = new NextRequest('http://localhost:3000/api/workflows/nonexistent/variables')
       const params = Promise.resolve({ id: 'nonexistent' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(404)
@@ -62,25 +72,28 @@ describe('Workflow Variables API Route', () => {
       expect(data.error).toBe('Workflow not found')
     })
 
-    it('should allow access when user owns the workflow', async () => {
+    it('should allow access when user has workspace permission', async () => {
       const mockWorkflow = {
         id: 'workflow-123',
         userId: 'user-123',
-        workspaceId: null,
+        workspaceId: 'workspace-456',
         variables: {
           'var-1': { id: 'var-1', name: 'test', type: 'string', value: 'hello' },
         },
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: true,
+        status: 200,
+        workflow: mockWorkflow,
+        workspacePermission: 'admin',
       })
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(200)
@@ -99,31 +112,22 @@ describe('Workflow Variables API Route', () => {
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: true,
+        status: 200,
+        workflow: mockWorkflow,
+        workspacePermission: 'read',
       })
-
-      vi.doMock('@/lib/permissions/utils', () => ({
-        getUserEntityPermissions: vi.fn().mockResolvedValue('read'),
-      }))
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(200)
       const data = await response.json()
       expect(data.data).toEqual(mockWorkflow.variables)
-
-      // Verify permissions check was called
-      const { getUserEntityPermissions } = await import('@/lib/permissions/utils')
-      expect(getUserEntityPermissions).toHaveBeenCalledWith(
-        'user-123',
-        'workspace',
-        'workspace-456'
-      )
     })
 
     it('should deny access when user has no workspace permissions', async () => {
@@ -135,94 +139,81 @@ describe('Workflow Variables API Route', () => {
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: false,
+        status: 403,
+        message: 'Unauthorized: Access denied to read this workflow',
+        workflow: mockWorkflow,
+        workspacePermission: null,
       })
-
-      vi.doMock('@/lib/permissions/utils', () => ({
-        getUserEntityPermissions: vi.fn().mockResolvedValue(null),
-      }))
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
-      expect(response.status).toBe(401)
+      expect(response.status).toBe(403)
       const data = await response.json()
-      expect(data.error).toBe('Unauthorized')
+      expect(data.error).toBe('Unauthorized: Access denied to read this workflow')
     })
 
     it.concurrent('should include proper cache headers', async () => {
       const mockWorkflow = {
         id: 'workflow-123',
         userId: 'user-123',
-        workspaceId: null,
+        workspaceId: 'workspace-456',
         variables: {
           'var-1': { id: 'var-1', name: 'test', type: 'string', value: 'hello' },
         },
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: true,
+        status: 200,
+        workflow: mockWorkflow,
+        workspacePermission: 'admin',
       })
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(200)
       expect(response.headers.get('Cache-Control')).toBe('max-age=30, stale-while-revalidate=300')
       expect(response.headers.get('ETag')).toMatch(/^"variables-workflow-123-\d+"$/)
     })
-
-    it.concurrent('should return empty object for workflows with no variables', async () => {
-      const mockWorkflow = {
-        id: 'workflow-123',
-        userId: 'user-123',
-        workspaceId: null,
-        variables: null,
-      }
-
-      authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
-      })
-
-      const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
-      const params = Promise.resolve({ id: 'workflow-123' })
-
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
-      const response = await GET(req, { params })
-
-      expect(response.status).toBe(200)
-      const data = await response.json()
-      expect(data.data).toEqual({})
-    })
   })
 
   describe('POST /api/workflows/[id]/variables', () => {
-    it('should allow owner to update variables', async () => {
+    it('should allow user with write permission to update variables', async () => {
       const mockWorkflow = {
         id: 'workflow-123',
         userId: 'user-123',
-        workspaceId: null,
+        workspaceId: 'workspace-456',
         variables: {},
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
-        update: { results: [{}] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: true,
+        status: 200,
+        workflow: mockWorkflow,
+        workspacePermission: 'write',
       })
 
-      const variables = [
-        { id: 'var-1', workflowId: 'workflow-123', name: 'test', type: 'string', value: 'hello' },
-      ]
+      const variables = {
+        'var-1': {
+          id: 'var-1',
+          workflowId: 'workflow-123',
+          name: 'test',
+          type: 'string',
+          value: 'hello',
+        },
+      }
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables', {
         method: 'POST',
@@ -230,7 +221,7 @@ describe('Workflow Variables API Route', () => {
       })
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { POST } = await import('@/app/api/workflows/[id]/variables/route')
+      const { POST } = await import('./route')
       const response = await POST(req, { params })
 
       expect(response.status).toBe(200)
@@ -247,17 +238,23 @@ describe('Workflow Variables API Route', () => {
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: false,
+        status: 403,
+        message: 'Unauthorized: Access denied to write this workflow',
+        workflow: mockWorkflow,
+        workspacePermission: null,
       })
 
-      vi.doMock('@/lib/permissions/utils', () => ({
-        getUserEntityPermissions: vi.fn().mockResolvedValue(null),
-      }))
-
-      const variables = [
-        { id: 'var-1', workflowId: 'workflow-123', name: 'test', type: 'string', value: 'hello' },
-      ]
+      const variables = {
+        'var-1': {
+          id: 'var-1',
+          workflowId: 'workflow-123',
+          name: 'test',
+          type: 'string',
+          value: 'hello',
+        },
+      }
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables', {
         method: 'POST',
@@ -265,28 +262,30 @@ describe('Workflow Variables API Route', () => {
       })
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { POST } = await import('@/app/api/workflows/[id]/variables/route')
+      const { POST } = await import('./route')
       const response = await POST(req, { params })
 
-      expect(response.status).toBe(401)
+      expect(response.status).toBe(403)
       const data = await response.json()
-      expect(data.error).toBe('Unauthorized')
+      expect(data.error).toBe('Unauthorized: Access denied to write this workflow')
     })
 
     it.concurrent('should validate request data schema', async () => {
       const mockWorkflow = {
         id: 'workflow-123',
         userId: 'user-123',
-        workspaceId: null,
+        workspaceId: 'workspace-456',
         variables: {},
       }
 
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { results: [[mockWorkflow]] },
+      mockAuthorizeWorkflowByWorkspacePermission.mockResolvedValueOnce({
+        allowed: true,
+        status: 200,
+        workflow: mockWorkflow,
+        workspacePermission: 'write',
       })
 
-      // Invalid data - missing required fields
       const invalidData = { variables: [{ name: 'test' }] }
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables', {
@@ -295,7 +294,7 @@ describe('Workflow Variables API Route', () => {
       })
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { POST } = await import('@/app/api/workflows/[id]/variables/route')
+      const { POST } = await import('./route')
       const response = await POST(req, { params })
 
       expect(response.status).toBe(400)
@@ -307,14 +306,14 @@ describe('Workflow Variables API Route', () => {
   describe('Error handling', () => {
     it.concurrent('should handle database errors gracefully', async () => {
       authMocks.setAuthenticated({ id: 'user-123', email: 'test@example.com' })
-      databaseMocks = createMockDatabase({
-        select: { throwError: true, errorMessage: 'Database connection failed' },
-      })
+      mockAuthorizeWorkflowByWorkspacePermission.mockRejectedValueOnce(
+        new Error('Database connection failed')
+      )
 
       const req = new NextRequest('http://localhost:3000/api/workflows/workflow-123/variables')
       const params = Promise.resolve({ id: 'workflow-123' })
 
-      const { GET } = await import('@/app/api/workflows/[id]/variables/route')
+      const { GET } = await import('./route')
       const response = await GET(req, { params })
 
       expect(response.status).toBe(500)

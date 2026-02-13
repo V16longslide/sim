@@ -10,26 +10,13 @@ export const memoryGetAllTool: ToolConfig<any, MemoryResponse> = {
   params: {},
 
   request: {
-    url: (params): any => {
-      // Get workflowId from context (set by workflow execution)
-      const workflowId = params._context?.workflowId
-
-      if (!workflowId) {
-        return {
-          _errorResponse: {
-            status: 400,
-            data: {
-              success: false,
-              error: {
-                message: 'workflowId is required and must be provided in execution context',
-              },
-            },
-          },
-        }
+    url: (params) => {
+      const workspaceId = params._context?.workspaceId
+      if (!workspaceId) {
+        throw new Error('workspaceId is required in execution context')
       }
 
-      // Append workflowId as query parameter
-      return `/api/memory?workflowId=${encodeURIComponent(workflowId)}`
+      return `/api/memory?workspaceId=${encodeURIComponent(workspaceId)}`
     },
     method: 'GET',
     headers: () => ({
@@ -40,22 +27,24 @@ export const memoryGetAllTool: ToolConfig<any, MemoryResponse> = {
   transformResponse: async (response): Promise<MemoryResponse> => {
     const result = await response.json()
 
-    // Extract memories from the response
     const data = result.data || result
-    const rawMemories = data.memories || data || []
+    const memories = data.memories || data || []
 
-    // Transform memories to return them with their keys and types for better context
-    const memories = rawMemories.map((memory: any) => ({
-      key: memory.key,
-      type: memory.type,
-      data: memory.data,
-    }))
+    if (!Array.isArray(memories) || memories.length === 0) {
+      return {
+        success: true,
+        output: {
+          memories: [],
+          message: 'No memories found',
+        },
+      }
+    }
 
     return {
       success: true,
       output: {
         memories,
-        message: 'Memories retrieved successfully',
+        message: `Found ${memories.length} memories`,
       },
     }
   },
@@ -64,7 +53,7 @@ export const memoryGetAllTool: ToolConfig<any, MemoryResponse> = {
     success: { type: 'boolean', description: 'Whether all memories were retrieved successfully' },
     memories: {
       type: 'array',
-      description: 'Array of all memory objects with keys, types, and data',
+      description: 'Array of all memory objects with key, conversationId, and data fields',
     },
     message: { type: 'string', description: 'Success or error message' },
     error: { type: 'string', description: 'Error message if operation failed' },

@@ -1,8 +1,4 @@
-import type {
-  DiscordMessage,
-  DiscordSendMessageParams,
-  DiscordSendMessageResponse,
-} from '@/tools/discord/types'
+import type { DiscordSendMessageParams, DiscordSendMessageResponse } from '@/tools/discord/types'
 import type { ToolConfig } from '@/tools/types'
 
 export const discordSendMessageTool: ToolConfig<
@@ -24,8 +20,8 @@ export const discordSendMessageTool: ToolConfig<
     channelId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The Discord channel ID to send the message to',
+      visibility: 'user-or-llm',
+      description: 'The Discord channel ID to send the message to, e.g., 123456789012345678',
     },
     content: {
       type: 'string',
@@ -36,54 +32,47 @@ export const discordSendMessageTool: ToolConfig<
     serverId: {
       type: 'string',
       required: true,
+      visibility: 'user-or-llm',
+      description: 'The Discord server ID (guild ID), e.g., 123456789012345678',
+    },
+    files: {
+      type: 'file[]',
+      required: false,
       visibility: 'user-only',
-      description: 'The Discord server ID (guild ID)',
+      description: 'Files to attach to the message',
     },
   },
 
   request: {
-    url: (params: DiscordSendMessageParams) =>
-      `https://discord.com/api/v10/channels/${params.channelId}/messages`,
+    url: '/api/tools/discord/send-message',
     method: 'POST',
-    headers: (params: DiscordSendMessageParams) => {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-
-      if (params.botToken) {
-        headers.Authorization = `Bot ${params.botToken}`
-      }
-
-      return headers
-    },
+    headers: () => ({
+      'Content-Type': 'application/json',
+    }),
     body: (params: DiscordSendMessageParams) => {
-      const body: Record<string, any> = {}
-
-      if (params.content) {
-        body.content = params.content
+      return {
+        botToken: params.botToken,
+        channelId: params.channelId,
+        content: params.content || 'Message sent from Sim',
+        files: params.files || null,
       }
-
-      if (!body.content) {
-        body.content = 'Message sent from Sim'
-      }
-
-      return body
     },
   },
 
   transformResponse: async (response) => {
-    const data = (await response.json()) as DiscordMessage
+    const data = await response.json()
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to send Discord message')
+    }
     return {
       success: true,
-      output: {
-        message: 'Discord message sent successfully',
-        data,
-      },
+      output: data.output,
     }
   },
 
   outputs: {
     message: { type: 'string', description: 'Success or error message' },
+    files: { type: 'file[]', description: 'Files attached to the message' },
     data: {
       type: 'object',
       description: 'Discord message data',

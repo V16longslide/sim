@@ -14,14 +14,6 @@ export const listTool: ToolConfig<OneDriveToolParams, OneDriveListResponse> = {
   oauth: {
     required: true,
     provider: 'onedrive',
-    additionalScopes: [
-      'openid',
-      'profile',
-      'email',
-      'Files.Read',
-      'Files.ReadWrite',
-      'offline_access',
-    ],
   },
 
   params: {
@@ -34,8 +26,8 @@ export const listTool: ToolConfig<OneDriveToolParams, OneDriveListResponse> = {
     folderSelector: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Select the folder to list files from',
+      visibility: 'user-or-llm',
+      description: 'Folder ID to list files from (e.g., "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36M")',
     },
     manualFolderId: {
       type: 'string',
@@ -47,13 +39,13 @@ export const listTool: ToolConfig<OneDriveToolParams, OneDriveListResponse> = {
       type: 'string',
       required: false,
       visibility: 'user-or-llm',
-      description: 'A query to filter the files',
+      description: 'Filter files by name prefix (e.g., "report", "invoice_2024")',
     },
     pageSize: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'The number of files to return',
+      visibility: 'user-or-llm',
+      description: 'Maximum number of files to return (e.g., 10, 50, 100)',
     },
   },
 
@@ -81,7 +73,7 @@ export const listTool: ToolConfig<OneDriveToolParams, OneDriveListResponse> = {
 
       // Add pagination
       if (params.pageSize) {
-        url.searchParams.append('$top', params.pageSize.toString())
+        url.searchParams.append('$top', Number(params.pageSize).toString())
       }
 
       return url.toString()

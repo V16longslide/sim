@@ -1,4 +1,5 @@
 import type { NotionResponse } from '@/tools/notion/types'
+import { DATABASE_OUTPUT_PROPERTIES } from '@/tools/notion/types'
 import type { ToolConfig } from '@/tools/types'
 
 export interface NotionReadDatabaseParams {
@@ -15,7 +16,6 @@ export const notionReadDatabaseTool: ToolConfig<NotionReadDatabaseParams, Notion
   oauth: {
     required: true,
     provider: 'notion',
-    additionalScopes: ['workspace.content', 'database.read'],
   },
 
   params: {
@@ -28,20 +28,14 @@ export const notionReadDatabaseTool: ToolConfig<NotionReadDatabaseParams, Notion
     databaseId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the Notion database to read',
+      visibility: 'user-or-llm',
+      description: 'The UUID of the Notion database to read',
     },
   },
 
   request: {
     url: (params: NotionReadDatabaseParams) => {
-      // Format database ID with hyphens if needed
-      const formattedId = params.databaseId.replace(
-        /(.{8})(.{4})(.{4})(.{4})(.{12})/,
-        '$1-$2-$3-$4-$5'
-      )
-
-      return `https://api.notion.com/v1/databases/${formattedId}`
+      return `https://api.notion.com/v1/databases/${params.databaseId}`
     },
     method: 'GET',
     headers: (params: NotionReadDatabaseParams) => {
@@ -105,6 +99,65 @@ export const notionReadDatabaseTool: ToolConfig<NotionReadDatabaseParams, Notion
     metadata: {
       type: 'object',
       description: 'Database metadata including title, ID, URL, timestamps, and properties schema',
+      properties: {
+        title: { type: 'string', description: 'Database title' },
+        url: DATABASE_OUTPUT_PROPERTIES.url,
+        id: DATABASE_OUTPUT_PROPERTIES.id,
+        createdTime: DATABASE_OUTPUT_PROPERTIES.created_time,
+        lastEditedTime: DATABASE_OUTPUT_PROPERTIES.last_edited_time,
+        properties: DATABASE_OUTPUT_PROPERTIES.properties,
+      },
     },
+  },
+}
+
+interface NotionReadDatabaseV2Response {
+  success: boolean
+  output: {
+    id: string
+    title: string
+    url: string
+    created_time: string
+    last_edited_time: string
+    properties: Record<string, any>
+  }
+}
+
+export const notionReadDatabaseV2Tool: ToolConfig<
+  NotionReadDatabaseParams,
+  NotionReadDatabaseV2Response
+> = {
+  id: 'notion_read_database_v2',
+  name: 'Read Notion Database',
+  description: 'Read database information and structure from Notion',
+  version: '2.0.0',
+  oauth: notionReadDatabaseTool.oauth,
+  params: notionReadDatabaseTool.params,
+  request: notionReadDatabaseTool.request,
+
+  transformResponse: async (response: Response) => {
+    const data = await response.json()
+    const title = data.title?.map((t: any) => t.plain_text || '').join('') || 'Untitled Database'
+
+    return {
+      success: true,
+      output: {
+        id: data.id,
+        title,
+        url: data.url,
+        created_time: data.created_time,
+        last_edited_time: data.last_edited_time,
+        properties: data.properties || {},
+      },
+    }
+  },
+
+  outputs: {
+    id: DATABASE_OUTPUT_PROPERTIES.id,
+    title: { type: 'string', description: 'Database title' },
+    url: DATABASE_OUTPUT_PROPERTIES.url,
+    created_time: DATABASE_OUTPUT_PROPERTIES.created_time,
+    last_edited_time: DATABASE_OUTPUT_PROPERTIES.last_edited_time,
+    properties: DATABASE_OUTPUT_PROPERTIES.properties,
   },
 }

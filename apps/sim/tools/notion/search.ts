@@ -1,4 +1,5 @@
 import type { NotionResponse, NotionSearchParams } from '@/tools/notion/types'
+import { PAGINATION_OUTPUT_PROPERTIES, SEARCH_RESULTS_OUTPUT } from '@/tools/notion/types'
 import { extractTitleFromItem } from '@/tools/notion/utils'
 import type { ToolConfig } from '@/tools/types'
 
@@ -11,7 +12,6 @@ export const notionSearchTool: ToolConfig<NotionSearchParams, NotionResponse> = 
   oauth: {
     required: true,
     provider: 'notion',
-    additionalScopes: ['workspace.content', 'page.read'],
   },
 
   params: {
@@ -24,19 +24,19 @@ export const notionSearchTool: ToolConfig<NotionSearchParams, NotionResponse> = 
     query: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Search terms (leave empty to get all pages)',
+      visibility: 'user-or-llm',
+      description: 'Search terms to find pages and databases (leave empty to get all pages)',
     },
     filterType: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Filter by object type: page, database, or leave empty for all',
+      visibility: 'user-or-llm',
+      description: 'Filter by object type: "page", "database", or leave empty for all',
     },
     pageSize: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
+      visibility: 'user-or-llm',
       description: 'Number of results to return (default: 100, max: 100)',
     },
   },
@@ -77,7 +77,7 @@ export const notionSearchTool: ToolConfig<NotionSearchParams, NotionResponse> = 
 
       // Add page size if provided
       if (params.pageSize) {
-        body.page_size = Math.min(params.pageSize, 100)
+        body.page_size = Math.min(Number(params.pageSize), 100)
       }
 
       return body
@@ -131,6 +131,55 @@ export const notionSearchTool: ToolConfig<NotionSearchParams, NotionResponse> = 
       type: 'object',
       description:
         'Search metadata including total results count, pagination info, and raw results array',
+      properties: {
+        totalResults: { type: 'number', description: 'Number of results returned' },
+        hasMore: PAGINATION_OUTPUT_PROPERTIES.has_more,
+        nextCursor: PAGINATION_OUTPUT_PROPERTIES.next_cursor,
+        results: SEARCH_RESULTS_OUTPUT,
+      },
     },
+  },
+}
+
+// V2 Tool with API-aligned outputs
+interface NotionSearchV2Response {
+  success: boolean
+  output: {
+    results: any[]
+    has_more: boolean
+    next_cursor: string | null
+    total_results: number
+  }
+}
+
+export const notionSearchV2Tool: ToolConfig<NotionSearchParams, NotionSearchV2Response> = {
+  id: 'notion_search_v2',
+  name: 'Search Notion Workspace',
+  description: 'Search across all pages and databases in Notion workspace',
+  version: '2.0.0',
+  oauth: notionSearchTool.oauth,
+  params: notionSearchTool.params,
+  request: notionSearchTool.request,
+
+  transformResponse: async (response: Response) => {
+    const data = await response.json()
+    const results = data.results || []
+
+    return {
+      success: true,
+      output: {
+        results,
+        has_more: data.has_more || false,
+        next_cursor: data.next_cursor || null,
+        total_results: results.length,
+      },
+    }
+  },
+
+  outputs: {
+    results: SEARCH_RESULTS_OUTPUT,
+    has_more: PAGINATION_OUTPUT_PROPERTIES.has_more,
+    next_cursor: PAGINATION_OUTPUT_PROPERTIES.next_cursor,
+    total_results: { type: 'number', description: 'Number of results returned' },
   },
 }

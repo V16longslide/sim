@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { GithubIcon, GoogleIcon } from '@/components/icons'
 import { Button } from '@/components/ui/button'
-import { client } from '@/lib/auth-client'
-import { inter } from '@/app/fonts/inter'
+import { client } from '@/lib/auth/auth-client'
+import { inter } from '@/app/_styles/fonts/inter/inter'
 
 interface SocialLoginButtonsProps {
   githubAvailable: boolean
   googleAvailable: boolean
   callbackURL?: string
   isProduction: boolean
+  children?: ReactNode
 }
 
 export function SocialLoginButtons({
@@ -18,6 +19,7 @@ export function SocialLoginButtons({
   googleAvailable,
   callbackURL = '/workspace',
   isProduction,
+  children,
 }: SocialLoginButtonsProps) {
   const [isGithubLoading, setIsGithubLoading] = useState(false)
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
@@ -103,7 +105,7 @@ export function SocialLoginButtons({
 
   const hasAnyOAuthProvider = githubAvailable || googleAvailable
 
-  if (!hasAnyOAuthProvider) {
+  if (!hasAnyOAuthProvider && !children) {
     return null
   }
 
@@ -111,6 +113,7 @@ export function SocialLoginButtons({
     <div className={`${inter.className} grid gap-3 font-light`}>
       {googleAvailable && googleButton}
       {githubAvailable && githubButton}
+      {children}
     </div>
   )
 }

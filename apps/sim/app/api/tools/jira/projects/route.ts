@@ -1,13 +1,20 @@
-import { NextResponse } from 'next/server'
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { type NextRequest, NextResponse } from 'next/server'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { validateAlphanumericId, validateJiraCloudId } from '@/lib/core/security/input-validation'
 import { getJiraCloudId } from '@/tools/jira/utils'
 
 export const dynamic = 'force-dynamic'
 
 const logger = createLogger('JiraProjectsAPI')
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await checkSessionOrInternalAuth(request)
+    if (!auth.success || !auth.userId) {
+      return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 })
+    }
+
     const url = new URL(request.url)
     const domain = url.searchParams.get('domain')?.trim()
     const accessToken = url.searchParams.get('accessToken')
@@ -22,19 +29,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Access token is required' }, { status: 400 })
     }
 
-    // Use provided cloudId or fetch it if not provided
     const cloudId = providedCloudId || (await getJiraCloudId(domain, accessToken))
     logger.info(`Using cloud ID: ${cloudId}`)
 
-    // Build the URL for the Jira API projects endpoint
+    const cloudIdValidation = validateJiraCloudId(cloudId, 'cloudId')
+    if (!cloudIdValidation.isValid) {
+      return NextResponse.json({ error: cloudIdValidation.error }, { status: 400 })
+    }
+
     const apiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/search`
 
-    // Add query parameters if searching
     const queryParams = new URLSearchParams()
     if (query) {
       queryParams.append('query', query)
     }
-    // Add other useful parameters
     queryParams.append('orderBy', 'name')
     queryParams.append('expand', 'description,lead,url,projectKeys')
 
@@ -66,18 +74,16 @@ export async function GET(request: Request) {
 
     const data = await response.json()
 
-    // Add detailed logging
     logger.info(`Jira API Response Status: ${response.status}`)
     logger.info(`Found projects: ${data.values?.length || 0}`)
 
-    // Transform the response to match our expected format
     const projects =
       data.values?.map((project: any) => ({
         id: project.id,
         key: project.key,
         name: project.name,
         url: project.self,
-        avatarUrl: project.avatarUrls?.['48x48'], // Use the medium size avatar
+        avatarUrl: project.avatarUrls?.['48x48'],
         description: project.description,
         projectTypeKey: project.projectTypeKey,
         simplified: project.simplified,
@@ -87,7 +93,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       projects,
-      cloudId, // Return the cloudId so it can be cached
+      cloudId,
     })
   } catch (error) {
     logger.error('Error fetching Jira projects:', error)
@@ -98,9 +104,13 @@ export async function GET(request: Request) {
   }
 }
 
-// For individual project retrieval if needed
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const auth = await checkSessionOrInternalAuth(request)
+    if (!auth.success || !auth.userId) {
+      return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 })
+    }
+
     const { domain, accessToken, projectId, cloudId: providedCloudId } = await request.json()
 
     if (!domain) {
@@ -115,8 +125,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Project ID is required' }, { status: 400 })
     }
 
-    // Use provided cloudId or fetch it if not provided
     const cloudId = providedCloudId || (await getJiraCloudId(domain, accessToken))
+
+    const cloudIdValidation = validateJiraCloudId(cloudId, 'cloudId')
+    if (!cloudIdValidation.isValid) {
+      return NextResponse.json({ error: cloudIdValidation.error }, { status: 400 })
+    }
+
+    const projectIdValidation = validateAlphanumericId(projectId, 'projectId', 100)
+    if (!projectIdValidation.isValid) {
+      return NextResponse.json({ error: projectIdValidation.error }, { status: 400 })
+    }
 
     const apiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/${projectId}`
 

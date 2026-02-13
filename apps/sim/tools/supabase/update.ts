@@ -17,8 +17,15 @@ export const updateTool: ToolConfig<SupabaseUpdateParams, SupabaseUpdateResponse
     table: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
+      visibility: 'user-or-llm',
       description: 'The name of the Supabase table to update',
+    },
+    schema: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Database schema to update in (default: public). Use this to access tables in other schemas.',
     },
     filter: {
       type: 'string',
@@ -35,7 +42,7 @@ export const updateTool: ToolConfig<SupabaseUpdateParams, SupabaseUpdateResponse
     apiKey: {
       type: 'string',
       required: true,
-      visibility: 'hidden',
+      visibility: 'user-only',
       description: 'Your Supabase service role secret key',
     },
   },
@@ -53,12 +60,18 @@ export const updateTool: ToolConfig<SupabaseUpdateParams, SupabaseUpdateResponse
       return url
     },
     method: 'PATCH',
-    headers: (params) => ({
-      apikey: params.apiKey,
-      Authorization: `Bearer ${params.apiKey}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-    }),
+    headers: (params) => {
+      const headers: Record<string, string> = {
+        apikey: params.apiKey,
+        Authorization: `Bearer ${params.apiKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      }
+      if (params.schema) {
+        headers['Content-Profile'] = params.schema
+      }
+      return headers
+    },
     body: (params) => params.data,
   },
 

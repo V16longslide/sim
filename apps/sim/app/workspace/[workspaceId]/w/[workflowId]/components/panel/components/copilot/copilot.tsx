@@ -1,62 +1,92 @@
 'use client'
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { ArrowDown } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { LoadingAgent } from '@/components/ui/loading-agent'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { createLogger } from '@/lib/logs/console/logger'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import {
-  CheckpointPanel,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { createLogger } from '@sim/logger'
+import { History, Plus } from 'lucide-react'
+import {
+  Button,
+  Popover,
+  PopoverContent,
+  PopoverItem,
+  PopoverScrollArea,
+  PopoverSection,
+  PopoverTrigger,
+} from '@/components/emcn'
+import { Trash } from '@/components/emcn/icons/trash'
+import { cn } from '@/lib/core/utils/cn'
+import {
+  ChatHistorySkeleton,
   CopilotMessage,
-  CopilotWelcome,
+  PlanModeSection,
+  QueuedMessages,
   TodoList,
   UserInput,
+  Welcome,
 } from '@/app/workspace/[workspaceId]/w/[workflowId]/components/panel/components/copilot/components'
-import type {
-  MessageFileAttachment,
-  UserInputRef,
-} from '@/app/workspace/[workspaceId]/w/[workflowId]/components/panel/components/copilot/components/user-input/user-input'
-import { COPILOT_TOOL_IDS } from '@/stores/copilot/constants'
-import { usePreviewStore } from '@/stores/copilot/preview-store'
-import { useCopilotStore } from '@/stores/copilot/store'
+import type { MessageFileAttachment } from '@/app/workspace/[workspaceId]/w/[workflowId]/components/panel/components/copilot/components/user-input/hooks/use-file-attachments'
+import type { UserInputRef } from '@/app/workspace/[workspaceId]/w/[workflowId]/components/panel/components/copilot/components/user-input/user-input'
+import {
+  useChatHistory,
+  useCopilotInitialization,
+  useLandingPrompt,
+  useTodoManagement,
+} from '@/app/workspace/[workspaceId]/w/[workflowId]/components/panel/components/copilot/hooks'
+import { useScrollManagement } from '@/app/workspace/[workspaceId]/w/[workflowId]/hooks'
+import type { ChatContext } from '@/stores/panel'
+import { useCopilotStore } from '@/stores/panel'
 import { useWorkflowRegistry } from '@/stores/workflows/registry/store'
 
 const logger = createLogger('Copilot')
 
+/**
+ * Props for the Copilot component
+ */
 interface CopilotProps {
+  /** Width of the copilot panel in pixels */
   panelWidth: number
 }
 
+/**
+ * Ref interface for imperative actions on the Copilot component
+ */
 interface CopilotRef {
+  /** Creates a new chat session */
   createNewChat: () => void
+  /** Sets the input value and focuses the textarea */
   setInputValueAndFocus: (value: string) => void
+  /** Focuses the copilot user input without changing its value */
+  focusInput: () => void
 }
 
+/**
+ * Copilot component - AI-powered assistant for workflow management
+ * Provides chat interface, message history, and intelligent workflow suggestions
+ */
 export const Copilot = forwardRef<CopilotRef, CopilotProps>(({ panelWidth }, ref) => {
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
   const userInputRef = useRef<UserInputRef>(null)
-  const [showCheckpoints] = useState(false)
-  const [isInitialized, setIsInitialized] = useState(false)
-  const [todosCollapsed, setTodosCollapsed] = useState(false)
-  const lastWorkflowIdRef = useRef<string | null>(null)
-  const hasMountedRef = useRef(false)
+  const copilotContainerRef = useRef<HTMLDivElement>(null)
+  const cancelEditCallbackRef = useRef<(() => void) | null>(null)
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [revertingMessageId, setRevertingMessageId] = useState<string | null>(null)
+  const [isHistoryDropdownOpen, setIsHistoryDropdownOpen] = useState(false)
 
-  // Scroll state
-  const [isNearBottom, setIsNearBottom] = useState(true)
-  const [showScrollButton, setShowScrollButton] = useState(false)
-  // New state to track if user has intentionally scrolled during streaming
-  const [userHasScrolledDuringStream, setUserHasScrolledDuringStream] = useState(false)
-  const isUserScrollingRef = useRef(false) // Track if scroll event is user-initiated
+  // Derived state - editing when there's an editingMessageId
+  const isEditingMessage = editingMessageId !== null
 
   const { activeWorkflowId } = useWorkflowRegistry()
 
-  // Use preview store to track seen previews
-  const { isToolCallSeen, markToolCallAsSeen } = usePreviewStore()
-
-  // Use the new copilot store
   const {
     messages,
+    chats,
     isLoadingChats,
     isSendingMessage,
     isAborting,
@@ -64,6 +94,7 @@ export const Copilot = forwardRef<CopilotRef, CopilotProps>(({ panelWidth }, ref
     inputValue,
     planTodos,
     showPlanTodos,
+    streamingPlanContent,
     sendMessage,
     abortMessage,
     createNewChat,
@@ -72,261 +103,146 @@ export const Copilot = forwardRef<CopilotRef, CopilotProps>(({ panelWidth }, ref
     chatsLoadedForWorkflow,
     setWorkflowId: setCopilotWorkflowId,
     loadChats,
+    messageCheckpoints,
+    currentChat,
+    selectChat,
+    deleteChat,
+    workflowId: copilotWorkflowId,
+    setPlanTodos,
+    closePlanTodos,
+    clearPlanArtifact,
+    savePlanArtifact,
+    loadAvailableModels,
+    loadAutoAllowedTools,
+    resumeActiveStream,
   } = useCopilotStore()
 
-  // Force fresh initialization on mount (handles hot reload)
-  useEffect(() => {
-    if (activeWorkflowId && !hasMountedRef.current) {
-      hasMountedRef.current = true
-      // Reset state to ensure fresh load, especially important for hot reload
-      setIsInitialized(false)
-      lastWorkflowIdRef.current = null
+  // Initialize copilot
+  const { isInitialized } = useCopilotInitialization({
+    activeWorkflowId,
+    isLoadingChats,
+    chatsLoadedForWorkflow,
+    setCopilotWorkflowId,
+    loadChats,
+    loadAvailableModels,
+    loadAutoAllowedTools,
+    currentChat,
+    isSendingMessage,
+    resumeActiveStream,
+  })
 
-      // Force reload chats for current workflow
-      setCopilotWorkflowId(activeWorkflowId)
-      loadChats(true) // Force refresh
+  // Handle scroll management (80px stickiness for copilot)
+  const { scrollAreaRef, scrollToBottom } = useScrollManagement(messages, isSendingMessage, {
+    stickinessThreshold: 40,
+  })
+
+  // Handle chat history grouping
+  const { groupedChats, handleHistoryDropdownOpen: handleHistoryDropdownOpenHook } = useChatHistory(
+    {
+      chats,
+      activeWorkflowId,
+      copilotWorkflowId,
+      loadChats,
+      isSendingMessage,
     }
-  }, [activeWorkflowId, setCopilotWorkflowId, loadChats])
+  )
 
-  // Initialize the component - only on mount and genuine workflow changes
-  useEffect(() => {
-    // If workflow actually changed (not initial mount), reset initialization
-    if (
-      activeWorkflowId &&
-      activeWorkflowId !== lastWorkflowIdRef.current &&
-      hasMountedRef.current
-    ) {
-      setIsInitialized(false)
-      lastWorkflowIdRef.current = activeWorkflowId
+  // Handle todo management
+  const { todosCollapsed, setTodosCollapsed } = useTodoManagement({
+    isSendingMessage,
+    showPlanTodos,
+    planTodos,
+  })
+
+  /** Gets markdown content for design document section (available in all modes once created) */
+  const designDocumentContent = useMemo(() => {
+    if (streamingPlanContent) {
+      logger.info('[DesignDocument] Using streaming plan content', {
+        contentLength: streamingPlanContent.length,
+      })
+      return streamingPlanContent
     }
 
-    // Set as initialized once we have the workflow and chats are ready
-    if (
-      activeWorkflowId &&
-      !isLoadingChats &&
-      chatsLoadedForWorkflow === activeWorkflowId &&
-      !isInitialized
-    ) {
-      setIsInitialized(true)
-    }
-  }, [activeWorkflowId, isLoadingChats, chatsLoadedForWorkflow, isInitialized])
+    return ''
+  }, [streamingPlanContent])
 
-  // Clear any existing preview when component mounts or workflow changes
-  useEffect(() => {
-    // Preview clearing is now handled automatically by the copilot store
-  }, [activeWorkflowId])
-
-  // Scroll to bottom function
-  const scrollToBottom = useCallback(() => {
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector(
-        '[data-radix-scroll-area-viewport]'
-      )
-      if (scrollContainer) {
-        // Mark that we're programmatically scrolling
-        isUserScrollingRef.current = false
-        scrollContainer.scrollTo({
-          top: scrollContainer.scrollHeight,
-          behavior: 'smooth',
-        })
-      }
-    }
+  /** Focuses the copilot input */
+  const focusInput = useCallback(() => {
+    userInputRef.current?.focus()
   }, [])
 
-  // Handle scroll events to track user position
-  const handleScroll = useCallback(() => {
-    const scrollArea = scrollAreaRef.current
-    if (!scrollArea) return
+  // Handle landing page prompt retrieval and population
+  useLandingPrompt({
+    isInitialized,
+    setInputValue,
+    focusInput,
+    isSendingMessage,
+    currentInputValue: inputValue,
+  })
 
-    // Find the viewport element inside the ScrollArea
-    const viewport = scrollArea.querySelector('[data-radix-scroll-area-viewport]')
-    if (!viewport) return
-
-    const { scrollTop, scrollHeight, clientHeight } = viewport
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-
-    // Consider "near bottom" if within 100px of bottom
-    const nearBottom = distanceFromBottom <= 100
-    setIsNearBottom(nearBottom)
-    setShowScrollButton(!nearBottom)
-
-    // If user scrolled up during streaming, mark it
-    if (isSendingMessage && !nearBottom && isUserScrollingRef.current) {
-      setUserHasScrolledDuringStream(true)
-    }
-
-    // Reset the user scrolling flag after processing
-    isUserScrollingRef.current = true
-  }, [isSendingMessage])
-
-  // Attach scroll listener
-  useEffect(() => {
-    const scrollArea = scrollAreaRef.current
-    if (!scrollArea) return
-
-    // Find the viewport element inside the ScrollArea
-    const viewport = scrollArea.querySelector('[data-radix-scroll-area-viewport]')
-    if (!viewport) return
-
-    // Mark user-initiated scrolls
-    const handleUserScroll = () => {
-      isUserScrollingRef.current = true
-      handleScroll()
-    }
-
-    viewport.addEventListener('scroll', handleUserScroll, { passive: true })
-
-    // Also listen for scrollend event if available (for smooth scrolling)
-    if ('onscrollend' in viewport) {
-      viewport.addEventListener('scrollend', handleScroll, { passive: true })
-    }
-
-    // Initial scroll state check with small delay to ensure DOM is ready
-    setTimeout(handleScroll, 100)
-
-    return () => {
-      viewport.removeEventListener('scroll', handleUserScroll)
-      if ('onscrollend' in viewport) {
-        viewport.removeEventListener('scrollend', handleScroll)
-      }
-    }
-  }, [handleScroll])
-
-  // Smart auto-scroll: only scroll if user hasn't intentionally scrolled up during streaming
-  useEffect(() => {
-    if (messages.length === 0) return
-
-    const lastMessage = messages[messages.length - 1]
-    const isNewUserMessage = lastMessage?.role === 'user'
-
-    // Conditions for auto-scrolling:
-    // 1. Always scroll for new user messages (resets the user scroll state)
-    // 2. For assistant messages during streaming: only if user hasn't scrolled up
-    // 3. For assistant messages when not streaming: only if near bottom
-    const shouldAutoScroll =
-      isNewUserMessage ||
-      (isSendingMessage && !userHasScrolledDuringStream) ||
-      (!isSendingMessage && isNearBottom)
-
-    if (shouldAutoScroll && scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector(
-        '[data-radix-scroll-area-viewport]'
-      )
-      if (scrollContainer) {
-        // Mark that we're programmatically scrolling
-        isUserScrollingRef.current = false
-        scrollContainer.scrollTo({
-          top: scrollContainer.scrollHeight,
-          behavior: 'smooth',
-        })
-      }
-    }
-  }, [messages, isNearBottom, isSendingMessage, userHasScrolledDuringStream])
-
-  // Reset user scroll state when streaming starts or when user sends a message
-  useEffect(() => {
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.role === 'user') {
-      // User sent a new message - reset scroll state
-      setUserHasScrolledDuringStream(false)
-      isUserScrollingRef.current = false
-    }
-  }, [messages])
-
-  // Reset user scroll state when streaming completes
-  const prevIsSendingRef = useRef(false)
-  useEffect(() => {
-    // When streaming transitions from true to false, reset the user scroll state
-    if (prevIsSendingRef.current && !isSendingMessage) {
-      setUserHasScrolledDuringStream(false)
-    }
-    prevIsSendingRef.current = isSendingMessage
-  }, [isSendingMessage])
-
-  // Auto-scroll to bottom when chat loads in
+  /** Auto-scrolls to bottom when chat loads */
   useEffect(() => {
     if (isInitialized && messages.length > 0) {
       scrollToBottom()
     }
   }, [isInitialized, messages.length, scrollToBottom])
 
-  // Track previous sending state to detect when stream completes
-  const wasSendingRef = useRef(false)
+  /** Cleanup on unmount - aborts active streaming. Uses refs to avoid stale closures */
+  const isSendingRef = useRef(isSendingMessage)
+  isSendingRef.current = isSendingMessage
+  const abortMessageRef = useRef(abortMessage)
+  abortMessageRef.current = abortMessage
 
-  // Auto-collapse todos and remove uncompleted ones when stream completes
-  useEffect(() => {
-    if (wasSendingRef.current && !isSendingMessage && showPlanTodos) {
-      // Stream just completed, collapse the todos and filter out uncompleted ones
-      setTodosCollapsed(true)
-
-      // Remove any uncompleted todos
-      const completedTodos = planTodos.filter((todo) => todo.completed === true)
-      if (completedTodos.length !== planTodos.length) {
-        // Only update if there are uncompleted todos to remove
-        const store = useCopilotStore.getState()
-        store.setPlanTodos(completedTodos)
-      }
-    }
-    wasSendingRef.current = isSendingMessage
-  }, [isSendingMessage, showPlanTodos, planTodos])
-
-  // Reset collapsed state when todos first appear
-  useEffect(() => {
-    if (showPlanTodos && planTodos.length > 0) {
-      // Check if this is the first time todos are showing
-      // (only expand if currently sending a message, meaning new todos are being created)
-      if (isSendingMessage) {
-        setTodosCollapsed(false)
-      }
-    }
-  }, [showPlanTodos, planTodos.length, isSendingMessage])
-
-  // Cleanup on component unmount (page refresh, navigation, etc.)
   useEffect(() => {
     return () => {
-      // Abort any active message streaming and terminate active tools
-      if (isSendingMessage) {
-        abortMessage()
+      if (isSendingRef.current) {
+        abortMessageRef.current()
         logger.info('Aborted active message streaming due to component unmount')
       }
     }
-  }, [isSendingMessage, abortMessage])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // Watch for completed preview_workflow tool calls in the new format
-  useEffect(() => {
-    if (!messages.length) return
+  /** Cancels edit mode when clicking outside the current edit area */
+  const handleCopilotClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!isEditingMessage) return
+      const target = event.target as HTMLElement
+      // Allow interactions with Radix portals (dropdowns, tooltips, dialogs, popovers, mention menu)
+      if (
+        target.closest('[data-radix-dropdown-menu-content]') ||
+        target.closest('[data-radix-popover-content]') ||
+        target.closest('[data-radix-dialog-content]') ||
+        target.closest('[data-radix-tooltip-content]') ||
+        target.closest('[data-radix-popper-content-wrapper]') ||
+        target.closest('.mention-menu-portal') ||
+        target.closest('[role="dialog"]') ||
+        target.closest('[role="menu"]')
+      ) {
+        return
+      }
+      const editContainer = copilotContainerRef.current?.querySelector(
+        `[data-edit-container][data-message-id="${editingMessageId}"]`
+      ) as HTMLElement | null
+      if (editContainer?.contains(target)) {
+        return
+      }
+      cancelEditCallbackRef.current?.()
+    },
+    [isEditingMessage, editingMessageId]
+  )
 
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage.role !== 'assistant' || !lastMessage.toolCalls) return
-
-    // Check for completed preview_workflow tool calls
-    const previewToolCall = lastMessage.toolCalls.find(
-      (tc) =>
-        tc.name === COPILOT_TOOL_IDS.BUILD_WORKFLOW &&
-        tc.state === 'success' &&
-        !isToolCallSeen(tc.id)
-    )
-
-    if (previewToolCall) {
-      logger.info('Preview workflow completed via native SSE')
-      // Mark as seen to prevent duplicate processing
-      markToolCallAsSeen(previewToolCall.id)
-      // Tool call handling logic would go here if needed
-    }
-  }, [messages, isToolCallSeen, markToolCallAsSeen])
-
-  // Handle new chat creation
+  /** Creates a new chat session and focuses the input */
   const handleStartNewChat = useCallback(() => {
-    // Preview clearing is now handled automatically by the copilot store
     createNewChat()
     logger.info('Started new chat')
 
-    // Focus the input after creating new chat
     setTimeout(() => {
       userInputRef.current?.focus()
-    }, 100) // Small delay to ensure DOM updates are complete
+    }, 100)
   }, [createNewChat])
 
+  /** Sets the input value and focuses the textarea */
   const handleSetInputValueAndFocus = useCallback(
     (value: string) => {
       setInputValue(value)
@@ -337,34 +253,39 @@ export const Copilot = forwardRef<CopilotRef, CopilotProps>(({ panelWidth }, ref
     [setInputValue]
   )
 
-  // Expose functions to parent
+  /** Exposes imperative functions to parent */
   useImperativeHandle(
     ref,
     () => ({
       createNewChat: handleStartNewChat,
       setInputValueAndFocus: handleSetInputValueAndFocus,
+      focusInput,
     }),
-    [handleStartNewChat, handleSetInputValueAndFocus]
+    [handleStartNewChat, handleSetInputValueAndFocus, focusInput]
   )
 
-  // Handle abort action
+  /** Aborts current message streaming and collapses todos if shown */
   const handleAbort = useCallback(() => {
     abortMessage()
-    // Collapse todos when aborting
     if (showPlanTodos) {
       setTodosCollapsed(true)
     }
   }, [abortMessage, showPlanTodos])
 
-  // Handle message submission
-  const handleSubmit = useCallback(
-    async (query: string, fileAttachments?: MessageFileAttachment[], contexts?: any[]) => {
-      if (!query || isSendingMessage || !activeWorkflowId) return
+  /** Closes the plan todos section and clears the todos */
+  const handleClosePlanTodos = useCallback(() => {
+    closePlanTodos()
+    setPlanTodos([])
+  }, [closePlanTodos, setPlanTodos])
 
-      // Clear todos when sending a new message
+  /** Handles message submission to the copilot */
+  const handleSubmit = useCallback(
+    async (query: string, fileAttachments?: MessageFileAttachment[], contexts?: ChatContext[]) => {
+      // Allow submission even when isSendingMessage - store will queue the message
+      if (!query || !activeWorkflowId) return
+
       if (showPlanTodos) {
-        const store = useCopilotStore.getState()
-        store.setPlanTodos([])
+        setPlanTodos([])
       }
 
       try {
@@ -378,93 +299,263 @@ export const Copilot = forwardRef<CopilotRef, CopilotProps>(({ panelWidth }, ref
         logger.error('Failed to send message:', error)
       }
     },
-    [isSendingMessage, activeWorkflowId, sendMessage, showPlanTodos]
+    [activeWorkflowId, sendMessage, showPlanTodos, setPlanTodos]
+  )
+
+  /** Handles message edit mode changes */
+  const handleEditModeChange = useCallback(
+    (messageId: string, isEditing: boolean, cancelCallback?: () => void) => {
+      setEditingMessageId(isEditing ? messageId : null)
+      cancelEditCallbackRef.current = isEditing ? cancelCallback || null : null
+      logger.info('Edit mode changed', { messageId, isEditing, willDimMessages: isEditing })
+    },
+    []
+  )
+
+  /** Handles checkpoint revert mode changes */
+  const handleRevertModeChange = useCallback((messageId: string, isReverting: boolean) => {
+    setRevertingMessageId(isReverting ? messageId : null)
+  }, [])
+
+  /** Handles chat deletion */
+  const handleDeleteChat = useCallback(
+    async (chatId: string) => {
+      try {
+        await deleteChat(chatId)
+      } catch (error) {
+        logger.error('Error deleting chat:', error)
+      }
+    },
+    [deleteChat]
+  )
+
+  /** Handles history dropdown opening state, loads chats if needed (non-blocking) */
+  const handleHistoryDropdownOpen = useCallback(
+    (open: boolean) => {
+      setIsHistoryDropdownOpen(open)
+      handleHistoryDropdownOpenHook(open)
+    },
+    [handleHistoryDropdownOpenHook]
   )
 
   return (
     <>
-      <div className='flex h-full flex-col overflow-hidden'>
-        {/* Show loading state until fully initialized */}
-        {!isInitialized ? (
+      <div
+        ref={copilotContainerRef}
+        onClickCapture={handleCopilotClickCapture}
+        className='flex h-full flex-col overflow-hidden'
+      >
+        {/* Header */}
+        <div className='mx-[-1px] flex flex-shrink-0 items-center justify-between gap-[8px] rounded-[4px] border border-[var(--border)] bg-[var(--surface-4)] px-[12px] py-[6px]'>
+          <h2 className='min-w-0 flex-1 truncate font-medium text-[14px] text-[var(--text-primary)]'>
+            {currentChat?.title || 'New Chat'}
+          </h2>
+          <div className='flex items-center gap-[8px]'>
+            <Button variant='ghost' className='p-0' onClick={handleStartNewChat}>
+              <Plus className='h-[14px] w-[14px]' />
+            </Button>
+            <Popover open={isHistoryDropdownOpen} onOpenChange={handleHistoryDropdownOpen}>
+              <PopoverTrigger asChild>
+                <Button variant='ghost' className='p-0'>
+                  <History className='h-[14px] w-[14px]' />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align='end' side='bottom' sideOffset={8} maxHeight={280}>
+                {isLoadingChats ? (
+                  <PopoverScrollArea>
+                    <ChatHistorySkeleton />
+                  </PopoverScrollArea>
+                ) : groupedChats.length === 0 ? (
+                  <div className='px-[6px] py-[16px] text-center text-[12px] text-muted-foreground'>
+                    No chats yet
+                  </div>
+                ) : (
+                  <PopoverScrollArea>
+                    {groupedChats.map(([groupName, chatsInGroup], groupIndex) => (
+                      <div key={groupName}>
+                        <PopoverSection className={groupIndex === 0 ? 'pt-0' : ''}>
+                          {groupName}
+                        </PopoverSection>
+                        <div className='flex flex-col gap-0.5'>
+                          {chatsInGroup.map((chat) => (
+                            <div key={chat.id} className='group'>
+                              <PopoverItem
+                                active={currentChat?.id === chat.id}
+                                onClick={() => {
+                                  if (currentChat?.id !== chat.id) {
+                                    selectChat(chat)
+                                  }
+                                  setIsHistoryDropdownOpen(false)
+                                }}
+                              >
+                                <span className='min-w-0 flex-1 truncate'>
+                                  {chat.title || 'New Chat'}
+                                </span>
+                                <div
+                                  className={cn(
+                                    'flex flex-shrink-0 items-center gap-[4px]',
+                                    currentChat?.id !== chat.id &&
+                                      'opacity-0 transition-opacity group-hover:opacity-100'
+                                  )}
+                                >
+                                  <Button
+                                    variant='ghost'
+                                    className='h-[16px] w-[16px] p-0'
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleDeleteChat(chat.id)
+                                    }}
+                                    aria-label='Delete chat'
+                                  >
+                                    <Trash className='h-[10px] w-[10px]' />
+                                  </Button>
+                                </div>
+                              </PopoverItem>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </PopoverScrollArea>
+                )}
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+
+        {/* Show loading state until fully initialized, but skip if actively streaming (resume case) */}
+        {!isInitialized && !isSendingMessage ? (
           <div className='flex h-full w-full items-center justify-center'>
             <div className='flex flex-col items-center gap-3'>
-              <LoadingAgent size='md' />
-              <p className='text-muted-foreground text-sm'>Loading chat history...</p>
+              <p className='text-muted-foreground text-sm'>Loading copilot</p>
             </div>
           </div>
         ) : (
           <>
-            {/* Messages area or Checkpoint Panel */}
-            {showCheckpoints ? (
-              <CheckpointPanel />
+            {/* Messages area */}
+            {messages.length === 0 && !isSendingMessage && !isEditingMessage ? (
+              /* Welcome state with input at top */
+              <div className='flex flex-1 flex-col overflow-hidden p-[8px]'>
+                <div className='flex-shrink-0'>
+                  <UserInput
+                    ref={userInputRef}
+                    onSubmit={handleSubmit}
+                    onAbort={handleAbort}
+                    disabled={!activeWorkflowId}
+                    isLoading={isSendingMessage}
+                    isAborting={isAborting}
+                    mode={mode}
+                    onModeChange={setMode}
+                    value={inputValue}
+                    onChange={setInputValue}
+                    panelWidth={panelWidth}
+                    hasPlanArtifact={Boolean(designDocumentContent)}
+                  />
+                </div>
+                <div className='flex-shrink-0 pt-[8px]'>
+                  <Welcome onQuestionClick={handleSubmit} mode={mode} />
+                </div>
+              </div>
             ) : (
-              <div className='relative flex-1 overflow-hidden'>
-                <ScrollArea ref={scrollAreaRef} className='h-full' hideScrollbar={true}>
-                  <div className='w-full max-w-full space-y-1 overflow-hidden'>
-                    {messages.length === 0 ? (
-                      <div className='flex h-full items-center justify-center p-4'>
-                        <CopilotWelcome
-                          onQuestionClick={handleSubmit}
-                          mode={mode === 'ask' ? 'ask' : 'agent'}
-                        />
-                      </div>
-                    ) : (
-                      messages.map((message) => (
-                        <CopilotMessage
-                          key={message.id}
-                          message={message}
-                          isStreaming={
-                            isSendingMessage && message.id === messages[messages.length - 1]?.id
-                          }
-                        />
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-
-                {/* Scroll to bottom button */}
-                {showScrollButton && (
-                  <div className='-translate-x-1/2 absolute bottom-4 left-1/2 z-10'>
-                    <Button
-                      onClick={scrollToBottom}
-                      size='sm'
-                      variant='outline'
-                      className='flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1 shadow-lg transition-all hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700'
-                    >
-                      <ArrowDown className='h-3.5 w-3.5 text-gray-700 dark:text-gray-300' />
-                      <span className='sr-only'>Scroll to bottom</span>
-                    </Button>
+              /* Normal messages view */
+              <div className='relative flex flex-1 flex-col overflow-hidden'>
+                {/* Design Document Section - Pinned at top, shown in all modes when available */}
+                {designDocumentContent && (
+                  <div className='flex-shrink-0 px-[8px] pt-[8px]'>
+                    <PlanModeSection
+                      content={designDocumentContent}
+                      onClear={clearPlanArtifact}
+                      onSave={savePlanArtifact}
+                    />
                   </div>
                 )}
+
+                <div className='relative flex-1 overflow-hidden'>
+                  <div
+                    ref={scrollAreaRef}
+                    className='h-full overflow-y-auto overflow-x-hidden px-[8px]'
+                  >
+                    <div
+                      className={`w-full max-w-full space-y-[8px] overflow-hidden py-[8px] ${
+                        showPlanTodos && planTodos.length > 0 ? 'pb-14' : 'pb-10'
+                      }`}
+                    >
+                      {messages.map((message, index) => {
+                        let isDimmed = false
+
+                        if (editingMessageId) {
+                          const editingIndex = messages.findIndex((m) => m.id === editingMessageId)
+                          isDimmed = editingIndex !== -1 && index > editingIndex
+                        }
+
+                        if (!isDimmed && revertingMessageId) {
+                          const revertingIndex = messages.findIndex(
+                            (m) => m.id === revertingMessageId
+                          )
+                          isDimmed = revertingIndex !== -1 && index > revertingIndex
+                        }
+
+                        const checkpointCount = messageCheckpoints[message.id]?.length || 0
+
+                        return (
+                          <CopilotMessage
+                            key={message.id}
+                            message={message}
+                            isStreaming={
+                              isSendingMessage && message.id === messages[messages.length - 1]?.id
+                            }
+                            panelWidth={panelWidth}
+                            isDimmed={isDimmed}
+                            checkpointCount={checkpointCount}
+                            onEditModeChange={(isEditing, cancelCallback) =>
+                              handleEditModeChange(message.id, isEditing, cancelCallback)
+                            }
+                            onRevertModeChange={(isReverting) =>
+                              handleRevertModeChange(message.id, isReverting)
+                            }
+                            isLastMessage={index === messages.length - 1}
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Todo list from plan tool - overlay at bottom so it's not clipped by scroll area */}
+                  {showPlanTodos && planTodos.length > 0 && (
+                    <div
+                      className='-translate-x-1/2 absolute bottom-0 left-1/2 z-[2] w-full max-w-full px-[8px]'
+                      style={{ maxWidth: `${panelWidth - 18}px` } as React.CSSProperties}
+                    >
+                      <TodoList
+                        todos={planTodos}
+                        collapsed={todosCollapsed}
+                        onClose={handleClosePlanTodos}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Queued messages (shown when messages are waiting) */}
+                <QueuedMessages />
+
+                {/* Input area with integrated mode selector */}
+                <div className='flex-shrink-0 px-[8px] pb-[8px]'>
+                  <UserInput
+                    ref={userInputRef}
+                    onSubmit={handleSubmit}
+                    onAbort={handleAbort}
+                    disabled={!activeWorkflowId}
+                    isLoading={isSendingMessage}
+                    isAborting={isAborting}
+                    mode={mode}
+                    onModeChange={setMode}
+                    value={inputValue}
+                    onChange={setInputValue}
+                    panelWidth={panelWidth}
+                    hasPlanArtifact={Boolean(designDocumentContent)}
+                  />
+                </div>
               </div>
-            )}
-
-            {/* Todo list from plan tool */}
-            {!showCheckpoints && showPlanTodos && (
-              <TodoList
-                todos={planTodos}
-                collapsed={todosCollapsed}
-                onClose={() => {
-                  const store = useCopilotStore.getState()
-                  store.setPlanTodos([])
-                }}
-              />
-            )}
-
-            {/* Input area with integrated mode selector */}
-            {!showCheckpoints && (
-              <UserInput
-                ref={userInputRef}
-                onSubmit={handleSubmit}
-                onAbort={handleAbort}
-                disabled={!activeWorkflowId}
-                isLoading={isSendingMessage}
-                isAborting={isAborting}
-                mode={mode}
-                onModeChange={setMode}
-                value={inputValue}
-                onChange={setInputValue}
-              />
             )}
           </>
         )}

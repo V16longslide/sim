@@ -23,20 +23,22 @@ export const chatTool: ToolConfig<PerplexityChatParams, PerplexityChatResponse> 
     model: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'Model to use for chat completions (e.g., sonar, mistral)',
+      visibility: 'user-or-llm',
+      description:
+        'Model to use for chat completions (e.g., "sonar", "sonar-pro", "sonar-reasoning")',
     },
     max_tokens: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Maximum number of tokens to generate',
+      visibility: 'user-or-llm',
+      description: 'Maximum number of tokens to generate (e.g., 1024, 2048, 4096)',
     },
     temperature: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Sampling temperature between 0 and 1',
+      visibility: 'user-or-llm',
+      description:
+        'Sampling temperature between 0 and 1 (e.g., 0.0 for deterministic, 0.7 for creative)',
     },
     apiKey: {
       type: 'string',
@@ -105,25 +107,18 @@ export const chatTool: ToolConfig<PerplexityChatParams, PerplexityChatResponse> 
   },
 
   outputs: {
-    success: { type: 'boolean', description: 'Operation success status' },
-    output: {
+    content: { type: 'string', description: 'Generated text content' },
+    model: { type: 'string', description: 'Model used for generation' },
+    usage: {
       type: 'object',
-      description: 'Chat completion results',
+      description: 'Token usage information',
       properties: {
-        content: { type: 'string', description: 'Generated text content' },
-        model: { type: 'string', description: 'Model used for generation' },
-        usage: {
-          type: 'object',
-          description: 'Token usage information',
-          properties: {
-            prompt_tokens: { type: 'number', description: 'Number of tokens in the prompt' },
-            completion_tokens: {
-              type: 'number',
-              description: 'Number of tokens in the completion',
-            },
-            total_tokens: { type: 'number', description: 'Total number of tokens used' },
-          },
+        prompt_tokens: { type: 'number', description: 'Number of tokens in the prompt' },
+        completion_tokens: {
+          type: 'number',
+          description: 'Number of tokens in the completion',
         },
+        total_tokens: { type: 'number', description: 'Total number of tokens used' },
       },
     },
   },

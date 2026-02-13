@@ -16,7 +16,6 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
   oauth: {
     required: true,
     provider: 'google-calendar',
-    additionalScopes: ['https://www.googleapis.com/auth/calendar'],
   },
 
   params: {
@@ -29,8 +28,8 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
     calendarId: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Calendar ID (defaults to primary)',
+      visibility: 'user-or-llm',
+      description: 'Google Calendar ID (e.g., primary or calendar@group.calendar.google.com)',
     },
     summary: {
       type: 'string',
@@ -54,19 +53,23 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'Start date and time (RFC3339 format, e.g., 2025-06-03T10:00:00-08:00)',
+      description:
+        'Start date and time. MUST include timezone offset (e.g., 2025-06-03T10:00:00-08:00) OR provide timeZone parameter',
     },
     endDateTime: {
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'End date and time (RFC3339 format, e.g., 2025-06-03T11:00:00-08:00)',
+      description:
+        'End date and time. MUST include timezone offset (e.g., 2025-06-03T11:00:00-08:00) OR provide timeZone parameter',
     },
     timeZone: {
       type: 'string',
       required: false,
       visibility: 'user-or-llm',
-      description: 'Time zone (e.g., America/Los_Angeles)',
+      description:
+        'Time zone (e.g., America/Los_Angeles). Required if datetime does not include offset. Defaults to America/Los_Angeles if not provided.',
+      default: 'America/Los_Angeles',
     },
     attendees: {
       type: 'array',
@@ -102,13 +105,20 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
       'Content-Type': 'application/json',
     }),
     body: (params: GoogleCalendarCreateParams): GoogleCalendarEventRequestBody => {
+      // Default timezone if not provided and datetime doesn't include offset
+      const timeZone = params.timeZone || 'America/Los_Angeles'
+      const needsTimezone =
+        !params.startDateTime.includes('+') && !params.startDateTime.includes('-', 10)
+
       const eventData: GoogleCalendarEventRequestBody = {
         summary: params.summary,
         start: {
           dateTime: params.startDateTime,
+          ...(needsTimezone ? { timeZone } : {}),
         },
         end: {
           dateTime: params.endDateTime,
+          ...(needsTimezone ? { timeZone } : {}),
         },
       }
 
@@ -120,6 +130,7 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
         eventData.location = params.location
       }
 
+      // Always set timezone if explicitly provided
       if (params.timeZone) {
         eventData.start.timeZone = params.timeZone
         eventData.end.timeZone = params.timeZone
@@ -180,3 +191,64 @@ export const createTool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCr
     },
   },
 }
+
+interface GoogleCalendarCreateV2Response {
+  success: boolean
+  output: {
+    id: string
+    htmlLink: string
+    status: string
+    summary: string | null
+    description: string | null
+    location: string | null
+    start: any
+    end: any
+    attendees: any | null
+    creator: any
+    organizer: any
+  }
+}
+
+export const createV2Tool: ToolConfig<GoogleCalendarCreateParams, GoogleCalendarCreateV2Response> =
+  {
+    id: 'google_calendar_create_v2',
+    name: 'Google Calendar Create Event',
+    description: 'Create a new event in Google Calendar. Returns API-aligned fields only.',
+    version: '2.0.0',
+    oauth: createTool.oauth,
+    params: createTool.params,
+    request: createTool.request,
+    transformResponse: async (response: Response) => {
+      const data: GoogleCalendarApiEventResponse = await response.json()
+
+      return {
+        success: true,
+        output: {
+          id: data.id,
+          htmlLink: data.htmlLink,
+          status: data.status,
+          summary: data.summary ?? null,
+          description: data.description ?? null,
+          location: data.location ?? null,
+          start: data.start,
+          end: data.end,
+          attendees: data.attendees ?? null,
+          creator: data.creator,
+          organizer: data.organizer,
+        },
+      }
+    },
+    outputs: {
+      id: { type: 'string', description: 'Event ID' },
+      htmlLink: { type: 'string', description: 'Event link' },
+      status: { type: 'string', description: 'Event status' },
+      summary: { type: 'string', description: 'Event title', optional: true },
+      description: { type: 'string', description: 'Event description', optional: true },
+      location: { type: 'string', description: 'Event location', optional: true },
+      start: { type: 'json', description: 'Event start' },
+      end: { type: 'json', description: 'Event end' },
+      attendees: { type: 'json', description: 'Event attendees', optional: true },
+      creator: { type: 'json', description: 'Event creator' },
+      organizer: { type: 'json', description: 'Event organizer' },
+    },
+  }

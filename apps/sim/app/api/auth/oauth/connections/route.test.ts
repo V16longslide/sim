@@ -3,8 +3,8 @@
  *
  * @vitest-environment node
  */
+import { createMockLogger, createMockRequest } from '@sim/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMockRequest } from '@/app/api/__test-utils__/utils'
 
 describe('OAuth Connections API Route', () => {
   const mockGetSession = vi.fn()
@@ -14,12 +14,9 @@ describe('OAuth Connections API Route', () => {
     where: vi.fn().mockReturnThis(),
     limit: vi.fn(),
   }
-  const mockLogger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }
+  const mockLogger = createMockLogger()
+  const mockParseProvider = vi.fn()
+  const mockEvaluateScopeCoverage = vi.fn()
 
   const mockUUID = 'mock-uuid-12345678-90ab-cdef-1234-567890abcdef'
 
@@ -49,8 +46,28 @@ describe('OAuth Connections API Route', () => {
       jwtDecode: vi.fn(),
     }))
 
-    vi.doMock('@/lib/logs/console/logger', () => ({
+    vi.doMock('@sim/logger', () => ({
       createLogger: vi.fn().mockReturnValue(mockLogger),
+    }))
+
+    mockParseProvider.mockImplementation((providerId: string) => ({
+      baseProvider: providerId.split('-')[0] || providerId,
+      featureType: providerId.split('-')[1] || 'default',
+    }))
+
+    mockEvaluateScopeCoverage.mockImplementation(
+      (_providerId: string, _grantedScopes: string[]) => ({
+        canonicalScopes: ['email', 'profile'],
+        grantedScopes: ['email', 'profile'],
+        missingScopes: [],
+        extraScopes: [],
+        requiresReauthorization: false,
+      })
+    )
+
+    vi.doMock('@/lib/oauth/utils', () => ({
+      parseProvider: mockParseProvider,
+      evaluateScopeCoverage: mockEvaluateScopeCoverage,
     }))
   })
 

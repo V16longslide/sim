@@ -23,8 +23,8 @@ export const updateTool: ToolConfig<MySQLUpdateParams, MySQLResponse> = {
     database: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'Database name to connect to',
+      visibility: 'user-or-llm',
+      description: 'Database name to connect to (e.g., my_database)',
     },
     username: {
       type: 'string',
@@ -48,7 +48,7 @@ export const updateTool: ToolConfig<MySQLUpdateParams, MySQLResponse> = {
       type: 'string',
       required: true,
       visibility: 'user-or-llm',
-      description: 'Table name to update',
+      description: 'Table name to update (e.g., users, orders)',
     },
     data: {
       type: 'object',
@@ -72,7 +72,7 @@ export const updateTool: ToolConfig<MySQLUpdateParams, MySQLResponse> = {
     }),
     body: (params) => ({
       host: params.host,
-      port: params.port,
+      port: Number(params.port),
       database: params.database,
       username: params.username,
       password: params.password,

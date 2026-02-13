@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next'
-import { getBrandConfig } from '@/lib/branding/branding'
+import { getBrandConfig } from '@/ee/whitelabeling'
 
 export default function manifest(): MetadataRoute.Manifest {
   const brand = getBrandConfig()
@@ -8,8 +8,9 @@ export default function manifest(): MetadataRoute.Manifest {
     name: brand.name === 'Sim' ? 'Sim - AI Agent Workflow Builder' : brand.name,
     short_name: brand.name,
     description:
-      'Open-source AI agent workflow builder. 30,000+ developers build and deploy agentic workflows on Sim. Visual drag-and-drop interface for creating AI automations. SOC2 and HIPAA compliant.',
+      'Open-source AI agent workflow builder. 60,000+ developers build and deploy agentic workflows on Sim. Visual drag-and-drop interface for creating AI automations. SOC2 and HIPAA compliant.',
     start_url: '/',
+    scope: '/',
     display: 'standalone',
     background_color: '#ffffff',
     theme_color: brand.theme?.primaryColor || '#6F3DFA',
@@ -38,7 +39,6 @@ export default function manifest(): MetadataRoute.Manifest {
         short_name: 'New',
         description: 'Create a new AI workflow',
         url: '/workspace',
-        icons: [{ src: '/icons/new-workflow.png', sizes: '192x192' }],
       },
     ],
     lang: 'en-US',

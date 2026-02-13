@@ -3,14 +3,14 @@
  *
  * @vitest-environment node
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createMockRequest,
   mockAuth,
   mockConsoleLogger,
   mockDrizzleOrm,
   mockKnowledgeSchemas,
-} from '@/app/api/__test-utils__/utils'
+} from '@sim/testing'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 mockKnowledgeSchemas()
 
@@ -59,12 +59,29 @@ describe('Document By ID API Route', () => {
     chunkCount: 5,
     tokenCount: 100,
     characterCount: 500,
-    processingStatus: 'completed',
+    processingStatus: 'completed' as const,
     processingStartedAt: new Date('2023-01-01T10:00:00Z'),
     processingCompletedAt: new Date('2023-01-01T10:05:00Z'),
     processingError: null,
     enabled: true,
     uploadedAt: new Date('2023-01-01T09:00:00Z'),
+    tag1: null,
+    tag2: null,
+    tag3: null,
+    tag4: null,
+    tag5: null,
+    tag6: null,
+    tag7: null,
+    number1: null,
+    number2: null,
+    number3: null,
+    number4: null,
+    number5: null,
+    date1: null,
+    date2: null,
+    boolean1: null,
+    boolean2: null,
+    boolean3: null,
     deletedAt: null,
   }
 

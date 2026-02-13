@@ -1,5 +1,6 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import { getBlock } from '@/blocks/index'
+import { isMcpTool } from '@/executor/constants'
 import type { BlockHandler, ExecutionContext } from '@/executor/types'
 import type { SerializedBlock } from '@/serializer/types'
 import { executeTool } from '@/tools'
@@ -7,28 +8,20 @@ import { getTool } from '@/tools/utils'
 
 const logger = createLogger('GenericBlockHandler')
 
-/**
- * Generic handler for any block types not covered by specialized handlers.
- * Acts as a fallback for custom or future block types.
- */
 export class GenericBlockHandler implements BlockHandler {
   canHandle(block: SerializedBlock): boolean {
-    // This handler can handle any block type
-    // It should be the last handler checked.
     return true
   }
 
   async execute(
+    ctx: ExecutionContext,
     block: SerializedBlock,
-    inputs: Record<string, any>,
-    context: ExecutionContext
+    inputs: Record<string, any>
   ): Promise<any> {
-    logger.info(`Executing block: ${block.id} (Type: ${block.metadata?.id})`)
-
-    const isMcpTool = block.config.tool?.startsWith('mcp-')
+    const isMcp = block.config.tool ? isMcpTool(block.config.tool) : false
     let tool = null
 
-    if (!isMcpTool) {
+    if (!isMcp) {
       tool = getTool(block.config.tool)
       if (!tool) {
         throw new Error(`Tool not found: ${block.config.tool}`)
@@ -41,17 +34,25 @@ export class GenericBlockHandler implements BlockHandler {
     if (blockType) {
       const blockConfig = getBlock(blockType)
       if (blockConfig?.tools?.config?.params) {
-        try {
-          const transformedParams = blockConfig.tools.config.params(inputs)
-          finalInputs = { ...inputs, ...transformedParams }
-          logger.info(`Applied parameter transformation for block type: ${blockType}`, {
-            original: inputs,
-            transformed: transformedParams,
-          })
-        } catch (error) {
-          logger.warn(`Failed to apply parameter transformation for block type ${blockType}:`, {
-            error: error instanceof Error ? error.message : String(error),
-          })
+        const transformedParams = blockConfig.tools.config.params(inputs)
+        finalInputs = { ...inputs, ...transformedParams }
+      }
+
+      if (blockConfig?.inputs) {
+        for (const [key, inputSchema] of Object.entries(blockConfig.inputs)) {
+          const value = finalInputs[key]
+          if (typeof value === 'string' && value.trim().length > 0) {
+            const inputType = typeof inputSchema === 'object' ? inputSchema.type : inputSchema
+            if (inputType === 'json' || inputType === 'array') {
+              try {
+                finalInputs[key] = JSON.parse(value.trim())
+              } catch (error) {
+                logger.warn(`Failed to parse ${inputType} field "${key}":`, {
+                  error: error instanceof Error ? error.message : String(error),
+                })
+              }
+            }
+          }
         }
       }
     }
@@ -62,13 +63,15 @@ export class GenericBlockHandler implements BlockHandler {
         {
           ...finalInputs,
           _context: {
-            workflowId: context.workflowId,
-            workspaceId: context.workspaceId,
+            workflowId: ctx.workflowId,
+            workspaceId: ctx.workspaceId,
+            executionId: ctx.executionId,
+            userId: ctx.userId,
+            isDeployedContext: ctx.isDeployedContext,
           },
         },
-        false, // skipProxy
-        false, // skipPostProcess
-        context // execution context for file processing
+        false,
+        ctx
       )
 
       if (!result.success) {
@@ -97,7 +100,7 @@ export class GenericBlockHandler implements BlockHandler {
       const output = result.output
       let cost = null
 
-      if (block.config.tool?.startsWith('knowledge_') && output?.cost) {
+      if (output?.cost) {
         cost = output.cost
       }
 

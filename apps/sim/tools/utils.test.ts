@@ -1,25 +1,27 @@
+import { createMockResponse, loggerMock } from '@sim/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  secureFetchWithPinnedIP,
+  validateUrlWithDNS,
+} from '@/lib/core/security/input-validation.server'
+import { transformTable } from '@/tools/shared/table'
 import type { ToolConfig } from '@/tools/types'
 import {
   createCustomToolRequestBody,
   createParamSchema,
-  executeRequest,
   formatRequestParams,
   getClientEnvVars,
-  transformTable,
   validateRequiredParametersAfterMerge,
 } from '@/tools/utils'
+import { executeRequest } from '@/tools/utils.server'
 
-vi.mock('@/lib/logs/console/logger', () => ({
-  createLogger: vi.fn().mockReturnValue({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+vi.mock('@sim/logger', () => loggerMock)
+vi.mock('@/lib/core/security/input-validation.server', () => ({
+  validateUrlWithDNS: vi.fn(),
+  secureFetchWithPinnedIP: vi.fn(),
 }))
 
-vi.mock('@/stores/settings/environment/store', () => {
+vi.mock('@/stores/settings/environment', () => {
   const mockStore = {
     getAllVariables: vi.fn().mockReturnValue({
       API_KEY: { value: 'mock-api-key' },
@@ -96,6 +98,25 @@ describe('transformTable', () => {
       count: 0,
       enabled: false,
     })
+  })
+
+  it.concurrent('should parse JSON string inputs and transform rows', () => {
+    const table = [
+      { id: '1', cells: { Key: 'city', Value: 'SF' } },
+      { id: '2', cells: { Key: 'temp', Value: 64 } },
+    ]
+    const result = transformTable(JSON.stringify(table))
+
+    expect(result).toEqual({
+      city: 'SF',
+      temp: 64,
+    })
+  })
+
+  it.concurrent('should parse JSON string object inputs', () => {
+    const result = transformTable(JSON.stringify({ a: 1, b: 'two' }))
+
+    expect(result).toEqual({ a: 1, b: 'two' })
   })
 })
 
@@ -232,7 +253,7 @@ describe('validateRequiredParametersAfterMerge', () => {
         required1: 'value',
         // required2 is missing
       })
-    }).toThrow('"Required2" is required for Test Tool')
+    }).toThrow('Required2 is required for Test Tool')
   })
 
   it.concurrent('should not throw error when all required parameters are provided', () => {
@@ -260,7 +281,7 @@ describe('validateRequiredParametersAfterMerge', () => {
         required1: null,
         required2: '',
       })
-    }).toThrow('"Required1" is required for Test Tool')
+    }).toThrow('Required1 is required for Test Tool')
   })
 
   it.concurrent(
@@ -317,7 +338,7 @@ describe('validateRequiredParametersAfterMerge', () => {
         // userOrLlmParam missing - should cause error
         // userOnlyParam missing - should NOT cause error (validated earlier)
       })
-    }).toThrow('"User Or Llm Param" is required for')
+    }).toThrow('User Or Llm Param is required for')
   })
 
   it.concurrent('should use parameter description in error messages when available', () => {
@@ -335,7 +356,7 @@ describe('validateRequiredParametersAfterMerge', () => {
 
     expect(() => {
       validateRequiredParametersAfterMerge('test-tool', toolWithDescriptions, {})
-    }).toThrow('"Subreddit" is required for Test Tool')
+    }).toThrow('Subreddit is required for Test Tool')
   })
 
   it.concurrent('should fall back to parameter name when no description available', () => {
@@ -353,7 +374,7 @@ describe('validateRequiredParametersAfterMerge', () => {
 
     expect(() => {
       validateRequiredParametersAfterMerge('test-tool', toolWithoutDescription, {})
-    }).toThrow('"Subreddit" is required for Test Tool')
+    }).toThrow('Subreddit is required for Test Tool')
   })
 
   it.concurrent('should handle undefined values as missing', () => {
@@ -362,7 +383,7 @@ describe('validateRequiredParametersAfterMerge', () => {
         required1: 'value',
         required2: undefined, // Explicitly undefined
       })
-    }).toThrow('"Required2" is required for Test Tool')
+    }).toThrow('Required2 is required for Test Tool')
   })
 
   it.concurrent('should validate all missing parameters at once', () => {
@@ -387,17 +408,24 @@ describe('validateRequiredParametersAfterMerge', () => {
     // Should throw for the first missing parameter it encounters
     expect(() => {
       validateRequiredParametersAfterMerge('test-tool', toolWithMultipleRequired, {})
-    }).toThrow('"Param1" is required for Test Tool')
+    }).toThrow('Param1 is required for Test Tool')
   })
 })
 
 describe('executeRequest', () => {
   let mockTool: ToolConfig
-  let mockFetch: any
+  const mockValidateUrlWithDNS = vi.mocked(validateUrlWithDNS)
+  const mockSecureFetchWithPinnedIP = vi.mocked(secureFetchWithPinnedIP)
 
   beforeEach(() => {
-    mockFetch = vi.fn()
-    global.fetch = mockFetch
+    mockValidateUrlWithDNS.mockResolvedValue({
+      isValid: true,
+      resolvedIP: '93.184.216.34',
+      originalHostname: 'api.example.com',
+    })
+    mockSecureFetchWithPinnedIP.mockResolvedValue(
+      createMockResponse({ json: { result: 'success' }, status: 200 })
+    )
 
     mockTool = {
       id: 'test-tool',
@@ -422,23 +450,21 @@ describe('executeRequest', () => {
   })
 
   it('should handle successful requests', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ result: 'success' }),
-    })
-
     const result = await executeRequest('test-tool', mockTool, {
       url: 'https://api.example.com',
       method: 'GET',
       headers: {},
     })
 
-    expect(mockFetch).toHaveBeenCalledWith('https://api.example.com', {
-      method: 'GET',
-      headers: {},
-      body: undefined,
-    })
+    expect(mockSecureFetchWithPinnedIP).toHaveBeenCalledWith(
+      'https://api.example.com',
+      '93.184.216.34',
+      {
+        method: 'GET',
+        headers: {},
+        body: undefined,
+      }
+    )
     expect(mockTool.transformResponse).toHaveBeenCalled()
     expect(result).toEqual({
       success: true,
@@ -448,12 +474,6 @@ describe('executeRequest', () => {
 
   it.concurrent('should use default transform response if not provided', async () => {
     mockTool.transformResponse = undefined
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ result: 'success' }),
-    })
 
     const result = await executeRequest('test-tool', mockTool, {
       url: 'https://api.example.com',
@@ -468,12 +488,14 @@ describe('executeRequest', () => {
   })
 
   it('should handle error responses', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 400,
-      statusText: 'Bad Request',
-      json: async () => ({ message: 'Invalid input' }),
-    })
+    mockSecureFetchWithPinnedIP.mockResolvedValueOnce(
+      createMockResponse({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: { message: 'Invalid input' },
+      })
+    )
 
     const result = await executeRequest('test-tool', mockTool, {
       url: 'https://api.example.com',
@@ -489,8 +511,7 @@ describe('executeRequest', () => {
   })
 
   it.concurrent('should handle network errors', async () => {
-    const networkError = new Error('Network error')
-    mockFetch.mockRejectedValueOnce(networkError)
+    mockSecureFetchWithPinnedIP.mockRejectedValueOnce(new Error('Network error'))
 
     const result = await executeRequest('test-tool', mockTool, {
       url: 'https://api.example.com',
@@ -506,14 +527,16 @@ describe('executeRequest', () => {
   })
 
   it('should handle JSON parse errors in error response', async () => {
-    mockFetch.mockResolvedValueOnce({
+    const errorResponse = createMockResponse({
       ok: false,
       status: 500,
       statusText: 'Server Error',
-      json: async () => {
-        throw new Error('Invalid JSON')
-      },
     })
+    errorResponse.json = vi.fn(async () => {
+      throw new Error('Invalid JSON')
+    })
+    errorResponse.text = vi.fn(async () => '')
+    mockSecureFetchWithPinnedIP.mockResolvedValueOnce(errorResponse)
 
     const result = await executeRequest('test-tool', mockTool, {
       url: 'https://api.example.com',
@@ -524,7 +547,44 @@ describe('executeRequest', () => {
     expect(result).toEqual({
       success: false,
       output: {},
-      error: 'Server Error', // Should use statusText in the error message
+      error: 'Server Error',
+    })
+  })
+
+  it('should handle transformResponse with non-JSON response', async () => {
+    const toolWithTransform = {
+      ...mockTool,
+      transformResponse: async (response: Response) => {
+        const xmlText = await response.text()
+        return {
+          success: true,
+          output: {
+            parsedData: 'mocked xml parsing result',
+            originalXml: xmlText,
+          },
+        }
+      },
+    }
+
+    mockSecureFetchWithPinnedIP.mockResolvedValueOnce(
+      createMockResponse({
+        status: 200,
+        text: '<xml><test>Mock XML response</test></xml>',
+      })
+    )
+
+    const result = await executeRequest('test-tool', toolWithTransform, {
+      url: 'https://api.example.com',
+      method: 'GET',
+      headers: {},
+    })
+
+    expect(result).toEqual({
+      success: true,
+      output: {
+        parsedData: 'mocked xml parsing result',
+        originalXml: '<xml><test>Mock XML response</test></xml>',
+      },
     })
   })
 })

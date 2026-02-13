@@ -1,17 +1,21 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
+import { env } from '@/lib/core/config/env'
 import type { ModelsObject } from '@/providers/ollama/types'
+import { filterBlacklistedModels, isProviderBlacklisted } from '@/providers/utils'
 
 const logger = createLogger('OllamaModelsAPI')
 const OLLAMA_HOST = env.OLLAMA_URL || 'http://localhost:11434'
 
-export const dynamic = 'force-dynamic'
-
 /**
  * Get available Ollama models
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
+  if (isProviderBlacklisted('ollama')) {
+    logger.info('Ollama provider is blacklisted, returning empty models')
+    return NextResponse.json({ models: [] })
+  }
+
   try {
     logger.info('Fetching Ollama models', {
       host: OLLAMA_HOST,
@@ -21,6 +25,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
       },
+      next: { revalidate: 60 },
     })
 
     if (!response.ok) {
@@ -32,10 +37,12 @@ export async function GET(request: NextRequest) {
     }
 
     const data = (await response.json()) as ModelsObject
-    const models = data.models.map((model) => model.name)
+    const allModels = data.models.map((model) => model.name)
+    const models = filterBlacklistedModels(allModels)
 
     logger.info('Successfully fetched Ollama models', {
       count: models.length,
+      filtered: allModels.length - models.length,
       models,
     })
 
@@ -46,7 +53,6 @@ export async function GET(request: NextRequest) {
       host: OLLAMA_HOST,
     })
 
-    // Return empty array instead of error to avoid breaking the UI
     return NextResponse.json({ models: [] })
   }
 }

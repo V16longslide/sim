@@ -1,6 +1,6 @@
 ---
 title: Slack
-description: Send messages to Slack or trigger workflows from Slack events
+description: Send, update, delete messages, add reactions in Slack or trigger workflows from Slack events
 ---
 
 import { BlockInfoCard } from "@/components/ui/block-info-card"
@@ -8,41 +8,10 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="slack"
   color="#611f69"
-  icon={true}
-  iconSvg={`<svg className="block-icon" viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg' >
-      <g>
-        <path
-          d='M53.8412698,161.320635 C53.8412698,176.152381 41.8539683,188.139683 27.0222222,188.139683 C12.1904762,188.139683 0.203174603,176.152381 0.203174603,161.320635 C0.203174603,146.488889 12.1904762,134.501587 27.0222222,134.501587 L53.8412698,134.501587 L53.8412698,161.320635 Z M67.2507937,161.320635 C67.2507937,146.488889 79.2380952,134.501587 94.0698413,134.501587 C108.901587,134.501587 120.888889,146.488889 120.888889,161.320635 L120.888889,228.368254 C120.888889,243.2 108.901587,255.187302 94.0698413,255.187302 C79.2380952,255.187302 67.2507937,243.2 67.2507937,228.368254 L67.2507937,161.320635 Z'
-          fill='#E01E5A'
-        />
-        <path
-          d='M94.0698413,53.6380952 C79.2380952,53.6380952 67.2507937,41.6507937 67.2507937,26.8190476 C67.2507937,11.9873016 79.2380952,-7.10542736e-15 94.0698413,-7.10542736e-15 C108.901587,-7.10542736e-15 120.888889,11.9873016 120.888889,26.8190476 L120.888889,53.6380952 L94.0698413,53.6380952 Z M94.0698413,67.2507937 C108.901587,67.2507937 120.888889,79.2380952 120.888889,94.0698413 C120.888889,108.901587 108.901587,120.888889 94.0698413,120.888889 L26.8190476,120.888889 C11.9873016,120.888889 0,108.901587 0,94.0698413 C0,79.2380952 11.9873016,67.2507937 26.8190476,67.2507937 L94.0698413,67.2507937 Z'
-          fill='#36C5F0'
-        />
-        <path
-          d='M201.549206,94.0698413 C201.549206,79.2380952 213.536508,67.2507937 228.368254,67.2507937 C243.2,67.2507937 255.187302,79.2380952 255.187302,94.0698413 C255.187302,108.901587 243.2,120.888889 228.368254,120.888889 L201.549206,120.888889 L201.549206,94.0698413 Z M188.139683,94.0698413 C188.139683,108.901587 176.152381,120.888889 161.320635,120.888889 C146.488889,120.888889 134.501587,108.901587 134.501587,94.0698413 L134.501587,26.8190476 C134.501587,11.9873016 146.488889,-1.42108547e-14 161.320635,-1.42108547e-14 C176.152381,-1.42108547e-14 188.139683,11.9873016 188.139683,26.8190476 L188.139683,94.0698413 Z'
-          fill='#2EB67D'
-        />
-        <path
-          d='M161.320635,201.549206 C176.152381,201.549206 188.139683,213.536508 188.139683,228.368254 C188.139683,243.2 176.152381,255.187302 161.320635,255.187302 C146.488889,255.187302 134.501587,243.2 134.501587,228.368254 L134.501587,201.549206 L161.320635,201.549206 Z M161.320635,188.139683 C146.488889,188.139683 134.501587,176.152381 134.501587,161.320635 C134.501587,146.488889 146.488889,134.501587 161.320635,134.501587 L228.571429,134.501587 C243.403175,134.501587 255.390476,146.488889 255.390476,161.320635 C255.390476,176.152381 243.403175,188.139683 228.571429,188.139683 L161.320635,188.139683 Z'
-          fill='#ECB22E'
-        />
-      </g>
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
 [Slack](https://www.slack.com/) is a business communication platform that offers teams a unified place for messaging, tools, and files.
-
-<iframe
-  width="100%"
-  height="400"
-  src="https://www.youtube.com/embed/J5jz3UaWmE8"
-  title="Slack Integration with Sim"
-  frameBorder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowFullScreen
-></iframe>
 
 With Slack, you can:
 
@@ -51,20 +20,46 @@ With Slack, you can:
 - **Enhance agent workflows**: Integrate Slack messaging into your agents to deliver results, alerts, and status updates
 - **Create and share Slack canvases**: Programmatically generate collaborative documents (canvases) in Slack channels
 - **Read messages from channels**: Retrieve and process recent messages from any Slack channel for monitoring or workflow triggers
+- **Manage bot messages**: Update, delete, and add reactions to messages sent by your bot
 
-In Sim, the Slack integration enables your agents to programmatically interact with Slack in several ways as part of their workflows:
+In Sim, the Slack integration enables your agents to programmatically interact with Slack with full message management capabilities as part of their workflows:
 
-- **Send messages**: Agents can send formatted messages to any Slack channel or user, supporting Slack's mrkdwn syntax for rich formatting.
-- **Create canvases**: Agents can create and share Slack canvases (collaborative documents) directly in channels, enabling richer content sharing and documentation.
-- **Read messages**: Agents can read recent messages from channels, allowing for monitoring, reporting, or triggering further actions based on channel activity.
+- **Send messages**: Agents can send formatted messages to any Slack channel or user, supporting Slack's mrkdwn syntax for rich formatting
+- **Update messages**: Edit previously sent bot messages to correct information or provide status updates
+- **Delete messages**: Remove bot messages when they're no longer needed or contain errors
+- **Add reactions**: Express sentiment or acknowledgment by adding emoji reactions to any message
+- **Create canvases**: Create and share Slack canvases (collaborative documents) directly in channels, enabling richer content sharing and documentation
+- **Read messages**: Read recent messages from channels, allowing for monitoring, reporting, or triggering further actions based on channel activity
+- **Download files**: Retrieve files shared in Slack channels for processing or archival
 
-This allows for powerful automation scenarios such as sending notifications, alerts, updates, and reports directly to your team's communication hub, sharing structured documents, or monitoring conversations for workflow triggers. Your agents can deliver timely information, share results from processes they've completed, create collaborative documents, or alert team members when attention is needed. This integration bridges the gap between your AI workflows and your team's communication, ensuring everyone stays informed without manual intervention. By connecting Sim with Slack, you can create agents that keep your team updated with relevant information at the right time, enhance collaboration by sharing insights automatically, and reduce the need for manual status updates—all while leveraging your existing Slack workspace where your team already communicates.
+This allows for powerful automation scenarios such as sending notifications with dynamic updates, managing conversational flows with editable status messages, acknowledging important messages with reactions, and maintaining clean channels by removing outdated bot messages. Your agents can deliver timely information, update messages as workflows progress, create collaborative documents, or alert team members when attention is needed. This integration bridges the gap between your AI workflows and your team's communication, ensuring everyone stays informed with accurate, up-to-date information. By connecting Sim with Slack, you can create agents that keep your team updated with relevant information at the right time, enhance collaboration by sharing and updating insights automatically, and reduce the need for manual status updates—all while leveraging your existing Slack workspace where your team already communicates.
+
+## Getting Started
+
+To connect Slack to your Sim workflows:
+
+1. Sign up or log in at [sim.ai](https://sim.ai)
+2. Create a new workflow or open an existing one
+3. Drag a **Slack** block onto your canvas
+4. Click the credential selector and choose **Connect**
+5. Authorize Sim to access your Slack workspace
+6. Select your target channel or user
+
+Once connected, you can use any of the Slack operations listed below.
+
+## AI-Generated Content
+
+Sim workflows may use AI models to generate messages and responses sent to Slack. AI-generated content may be inaccurate or contain errors. Always review automated outputs, especially for critical communications.
+
+## Need Help?
+
+If you encounter issues with the Slack integration, contact us at [help@sim.ai](mailto:help@sim.ai)
 {/* MANUAL-CONTENT-END */}
 
 
 ## Usage Instructions
 
-Integrate Slack into the workflow. Can send messages, create canvases, and read messages. Requires OAuth. Can be used in trigger mode to trigger a workflow when a message is sent to a channel.
+Integrate Slack into the workflow. Can send, update, and delete messages, create canvases, read messages, and add reactions. Requires Bot Token instead of OAuth in advanced mode. Can be used in trigger mode to trigger a workflow when a message is sent to a channel.
 
 
 
@@ -72,23 +67,84 @@ Integrate Slack into the workflow. Can send messages, create canvases, and read 
 
 ### `slack_message`
 
-Send messages to Slack channels or users through the Slack API. Supports Slack mrkdwn formatting.
+Send messages to Slack channels or direct messages. Supports Slack mrkdwn formatting.
 
 #### Input
 
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
 | `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `destinationType` | string | No | Destination type: channel or dm |
 | `botToken` | string | No | Bot token for Custom Bot |
-| `channel` | string | Yes | Target Slack channel \(e.g., #general\) |
+| `channel` | string | No | Slack channel ID \(e.g., C1234567890\) |
+| `dmUserId` | string | No | Slack user ID for direct messages \(e.g., U1234567890\) |
 | `text` | string | Yes | Message text to send \(supports Slack mrkdwn formatting\) |
+| `thread_ts` | string | No | Thread timestamp to reply to \(creates thread reply\) |
+| `files` | file[] | No | Files to attach to the message |
 
 #### Output
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
+| `message` | object | Complete message object with all properties returned by Slack |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
 | `ts` | string | Message timestamp |
 | `channel` | string | Channel ID where message was sent |
+| `fileCount` | number | Number of files uploaded \(when files are attached\) |
+| `files` | file[] | Files attached to the message |
 
 ### `slack_canvas`
 
@@ -100,7 +156,7 @@ Create and share Slack canvases in channels. Canvases are collaborative document
 | --------- | ---- | -------- | ----------- |
 | `authMethod` | string | No | Authentication method: oauth or bot_token |
 | `botToken` | string | No | Bot token for Custom Bot |
-| `channel` | string | Yes | Target Slack channel \(e.g., #general\) |
+| `channel` | string | Yes | Slack channel ID \(e.g., C1234567890\) |
 | `title` | string | Yes | Title of the canvas |
 | `content` | string | Yes | Canvas content in markdown format |
 | `document_content` | object | No | Structured canvas document content |
@@ -109,9 +165,9 @@ Create and share Slack canvases in channels. Canvases are collaborative document
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `canvas_id` | string | ID of the created canvas |
+| `canvas_id` | string | Unique canvas identifier |
 | `channel` | string | Channel where canvas was created |
-| `title` | string | Title of the canvas |
+| `title` | string | Canvas title |
 
 ### `slack_message_reader`
 
@@ -122,9 +178,11 @@ Read the latest messages from Slack channels. Retrieve conversation history with
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
 | `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `destinationType` | string | No | Destination type: channel or dm |
 | `botToken` | string | No | Bot token for Custom Bot |
-| `channel` | string | Yes | Slack channel to read messages from \(e.g., #general\) |
-| `limit` | number | No | Number of messages to retrieve \(default: 10, max: 100\) |
+| `channel` | string | No | Slack channel ID to read messages from \(e.g., C1234567890\) |
+| `dmUserId` | string | No | Slack user ID for DM conversation \(e.g., U1234567890\) |
+| `limit` | number | No | Number of messages to retrieve \(default: 10, max: 15\) |
 | `oldest` | string | No | Start of time range \(timestamp\) |
 | `latest` | string | No | End of time range \(timestamp\) |
 
@@ -133,10 +191,607 @@ Read the latest messages from Slack channels. Retrieve conversation history with
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
 | `messages` | array | Array of message objects from the channel |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+
+### `slack_get_message`
+
+Retrieve a specific message by its timestamp. Useful for getting a thread parent message.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Slack channel ID \(e.g., C1234567890\) |
+| `timestamp` | string | Yes | Message timestamp to retrieve \(e.g., 1405894322.002768\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | object | The retrieved message object |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+
+### `slack_get_thread`
+
+Retrieve an entire thread including the parent message and all replies. Useful for getting full conversation context.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Slack channel ID \(e.g., C1234567890\) |
+| `threadTs` | string | Yes | Thread timestamp \(thread_ts\) to retrieve \(e.g., 1405894322.002768\) |
+| `limit` | number | No | Maximum number of messages to return \(default: 100, max: 200\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `parentMessage` | object | The thread parent message |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+| `replies` | array | Array of reply messages in the thread \(excluding the parent\) |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+| `messages` | array | All messages in the thread \(parent + replies\) in chronological order |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+| `replyCount` | number | Number of replies returned in this response |
+| `hasMore` | boolean | Whether there are more messages in the thread \(pagination needed\) |
+
+### `slack_list_channels`
+
+List all channels in a Slack workspace. Returns public and private channels the bot has access to.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `includePrivate` | boolean | No | Include private channels the bot is a member of \(default: true\) |
+| `excludeArchived` | boolean | No | Exclude archived channels \(default: true\) |
+| `limit` | number | No | Maximum number of channels to return \(default: 100, max: 200\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `channels` | array | Array of channel objects from the workspace |
+|   ↳ `id` | string | Channel ID \(e.g., C1234567890\) |
+|   ↳ `name` | string | Channel name without # prefix |
+|   ↳ `is_channel` | boolean | Whether this is a channel |
+|   ↳ `is_private` | boolean | Whether channel is private |
+|   ↳ `is_archived` | boolean | Whether channel is archived |
+|   ↳ `is_general` | boolean | Whether this is the general channel |
+|   ↳ `is_member` | boolean | Whether the bot/user is a member |
+|   ↳ `is_shared` | boolean | Whether channel is shared across workspaces |
+|   ↳ `is_ext_shared` | boolean | Whether channel is externally shared |
+|   ↳ `is_org_shared` | boolean | Whether channel is org-wide shared |
+|   ↳ `num_members` | number | Number of members in the channel |
+|   ↳ `topic` | string | Channel topic |
+|   ↳ `purpose` | string | Channel purpose/description |
+|   ↳ `created` | number | Unix timestamp when channel was created |
+|   ↳ `creator` | string | User ID of channel creator |
+|   ↳ `updated` | number | Unix timestamp of last update |
+| `ids` | array | Array of channel IDs for easy access |
+| `names` | array | Array of channel names for easy access |
+| `count` | number | Total number of channels returned |
+
+### `slack_list_members`
+
+List all members (user IDs) in a Slack channel. Use with Get User Info to resolve IDs to names.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Channel ID to list members from |
+| `limit` | number | No | Maximum number of members to return \(default: 100, max: 200\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `members` | array | Array of user IDs who are members of the channel \(e.g., U1234567890\) |
+| `count` | number | Total number of members returned |
+
+### `slack_list_users`
+
+List all users in a Slack workspace. Returns user profiles with names and avatars.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `includeDeleted` | boolean | No | Include deactivated/deleted users \(default: false\) |
+| `limit` | number | No | Maximum number of users to return \(default: 100, max: 200\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `users` | array | Array of user objects from the workspace |
+|   ↳ `id` | string | User ID \(e.g., U1234567890\) |
+|   ↳ `name` | string | Username \(handle\) |
+|   ↳ `real_name` | string | Full real name |
+|   ↳ `display_name` | string | Display name shown in Slack |
+|   ↳ `is_bot` | boolean | Whether the user is a bot |
+|   ↳ `is_admin` | boolean | Whether the user is a workspace admin |
+|   ↳ `is_owner` | boolean | Whether the user is the workspace owner |
+|   ↳ `deleted` | boolean | Whether the user is deactivated |
+|   ↳ `timezone` | string | User timezone identifier |
+|   ↳ `avatar` | string | URL to user avatar image |
+|   ↳ `status_text` | string | Custom status text |
+|   ↳ `status_emoji` | string | Custom status emoji |
+| `ids` | array | Array of user IDs for easy access |
+| `names` | array | Array of usernames for easy access |
+| `count` | number | Total number of users returned |
+
+### `slack_get_user`
+
+Get detailed information about a specific Slack user by their user ID.
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `userId` | string | Yes | User ID to look up \(e.g., U1234567890\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `user` | object | Detailed user information |
+|   ↳ `id` | string | User ID \(e.g., U1234567890\) |
+|   ↳ `team_id` | string | Workspace/team ID |
+|   ↳ `name` | string | Username \(handle\) |
+|   ↳ `real_name` | string | Full real name |
+|   ↳ `display_name` | string | Display name shown in Slack |
+|   ↳ `first_name` | string | First name |
+|   ↳ `last_name` | string | Last name |
+|   ↳ `title` | string | Job title |
+|   ↳ `phone` | string | Phone number |
+|   ↳ `skype` | string | Skype handle |
+|   ↳ `is_bot` | boolean | Whether the user is a bot |
+|   ↳ `is_admin` | boolean | Whether the user is a workspace admin |
+|   ↳ `is_owner` | boolean | Whether the user is the workspace owner |
+|   ↳ `is_primary_owner` | boolean | Whether the user is the primary owner |
+|   ↳ `is_restricted` | boolean | Whether the user is a guest \(restricted\) |
+|   ↳ `is_ultra_restricted` | boolean | Whether the user is a single-channel guest |
+|   ↳ `is_app_user` | boolean | Whether user is an app user |
+|   ↳ `is_stranger` | boolean | Whether user is from different workspace |
+|   ↳ `deleted` | boolean | Whether the user is deactivated |
+|   ↳ `color` | string | User color for display |
+|   ↳ `timezone` | string | Timezone identifier \(e.g., America/Los_Angeles\) |
+|   ↳ `timezone_label` | string | Human-readable timezone label |
+|   ↳ `timezone_offset` | number | Timezone offset in seconds from UTC |
+|   ↳ `avatar` | string | URL to user avatar image |
+|   ↳ `avatar_24` | string | URL to 24px avatar |
+|   ↳ `avatar_48` | string | URL to 48px avatar |
+|   ↳ `avatar_72` | string | URL to 72px avatar |
+|   ↳ `avatar_192` | string | URL to 192px avatar |
+|   ↳ `avatar_512` | string | URL to 512px avatar |
+|   ↳ `status_text` | string | Custom status text |
+|   ↳ `status_emoji` | string | Custom status emoji |
+|   ↳ `status_expiration` | number | Unix timestamp when status expires |
+|   ↳ `updated` | number | Unix timestamp of last profile update |
+|   ↳ `has_2fa` | boolean | Whether two-factor auth is enabled |
+
+### `slack_download`
+
+Download a file from Slack
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `fileId` | string | Yes | The ID of the file to download |
+| `fileName` | string | No | Optional filename override |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `file` | file | Downloaded file stored in execution files |
+
+### `slack_update_message`
+
+Update a message previously sent by the bot in Slack
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Channel ID where the message was posted \(e.g., C1234567890\) |
+| `timestamp` | string | Yes | Timestamp of the message to update \(e.g., 1405894322.002768\) |
+| `text` | string | Yes | New message text \(supports Slack mrkdwn formatting\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `message` | object | Complete updated message object with all properties returned by Slack |
+|   ↳ `type` | string | Message type \(usually "message"\) |
+|   ↳ `ts` | string | Message timestamp \(unique identifier\) |
+|   ↳ `text` | string | Message text content |
+|   ↳ `user` | string | User ID who sent the message |
+|   ↳ `bot_id` | string | Bot ID if sent by a bot |
+|   ↳ `username` | string | Display username |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `team` | string | Team/workspace ID |
+|   ↳ `thread_ts` | string | Parent message timestamp \(for threaded replies\) |
+|   ↳ `parent_user_id` | string | User ID of thread parent message author |
+|   ↳ `reply_count` | number | Total number of replies in thread |
+|   ↳ `reply_users_count` | number | Number of unique users who replied |
+|   ↳ `latest_reply` | string | Timestamp of most recent reply |
+|   ↳ `subscribed` | boolean | Whether user is subscribed to thread |
+|   ↳ `last_read` | string | Timestamp of last read message |
+|   ↳ `unread_count` | number | Number of unread messages in thread |
+|   ↳ `subtype` | string | Message subtype \(bot_message, file_share, etc.\) |
+|   ↳ `is_starred` | boolean | Whether message is starred by user |
+|   ↳ `pinned_to` | array | Channel IDs where message is pinned |
+|   ↳ `permalink` | string | Permanent URL to the message |
+|   ↳ `reactions` | array | Reactions on this message |
+|     ↳ `name` | string | Emoji name \(without colons\) |
+|     ↳ `count` | number | Number of times this reaction was added |
+|     ↳ `users` | array | Array of user IDs who reacted |
+|   ↳ `files` | array | Files attached to the message |
+|     ↳ `id` | string | Unique file identifier |
+|     ↳ `name` | string | File name |
+|     ↳ `mimetype` | string | MIME type of the file |
+|     ↳ `size` | number | File size in bytes |
+|     ↳ `url_private` | string | Private download URL \(requires auth\) |
+|     ↳ `permalink` | string | Permanent link to the file |
+|     ↳ `mode` | string | File mode \(hosted, external, etc.\) |
+|   ↳ `attachments` | array | Legacy attachments on the message |
+|     ↳ `id` | number | Attachment ID |
+|     ↳ `fallback` | string | Plain text summary |
+|     ↳ `text` | string | Main attachment text |
+|     ↳ `pretext` | string | Text shown before attachment |
+|     ↳ `color` | string | Color bar hex code or preset |
+|     ↳ `author_name` | string | Author display name |
+|     ↳ `author_link` | string | Author link URL |
+|     ↳ `author_icon` | string | Author icon URL |
+|     ↳ `title` | string | Attachment title |
+|     ↳ `title_link` | string | Title link URL |
+|     ↳ `image_url` | string | Image URL |
+|     ↳ `thumb_url` | string | Thumbnail URL |
+|     ↳ `footer` | string | Footer text |
+|     ↳ `footer_icon` | string | Footer icon URL |
+|     ↳ `ts` | string | Timestamp shown in footer |
+|   ↳ `blocks` | array | Block Kit blocks in the message |
+|     ↳ `type` | string | Block type \(section, divider, image, actions, etc.\) |
+|     ↳ `block_id` | string | Unique block identifier |
+|   ↳ `edited` | object | Edit information if message was edited |
+|     ↳ `user` | string | User ID who edited the message |
+|     ↳ `ts` | string | Timestamp of the edit |
+| `content` | string | Success message |
+| `metadata` | object | Updated message metadata |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `timestamp` | string | Message timestamp |
+|   ↳ `text` | string | Updated message text |
+
+### `slack_delete_message`
+
+Delete a message previously sent by the bot in Slack
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Channel ID where the message was posted \(e.g., C1234567890\) |
+| `timestamp` | string | Yes | Timestamp of the message to delete \(e.g., 1405894322.002768\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `content` | string | Success message |
+| `metadata` | object | Deleted message metadata |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `timestamp` | string | Message timestamp |
+
+### `slack_add_reaction`
+
+Add an emoji reaction to a Slack message
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `authMethod` | string | No | Authentication method: oauth or bot_token |
+| `botToken` | string | No | Bot token for Custom Bot |
+| `channel` | string | Yes | Channel ID where the message was posted \(e.g., C1234567890\) |
+| `timestamp` | string | Yes | Timestamp of the message to react to \(e.g., 1405894322.002768\) |
+| `name` | string | Yes | Name of the emoji reaction \(without colons, e.g., thumbsup, heart, eyes\) |
+
+#### Output
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `content` | string | Success message |
+| `metadata` | object | Reaction metadata |
+|   ↳ `channel` | string | Channel ID |
+|   ↳ `timestamp` | string | Message timestamp |
+|   ↳ `reaction` | string | Emoji reaction name |
 
 
-
-## Notes
-
-- Category: `tools`
-- Type: `slack`

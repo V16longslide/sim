@@ -2,44 +2,43 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { createLogger } from '@sim/logger'
 import imageCompression from 'browser-image-compression'
 import { X } from 'lucide-react'
 import Image from 'next/image'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { createLogger } from '@/lib/logs/console/logger'
-import { cn } from '@/lib/utils'
+  Button,
+  Combobox,
+  Input,
+  Label,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  Textarea,
+} from '@/components/emcn'
+import { cn } from '@/lib/core/utils/cn'
 
 const logger = createLogger('HelpModal')
 
-// File upload constraints
 const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB maximum upload size
 const TARGET_SIZE_MB = 2 // Target size after compression
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
 
-// UI timing constants
 const SCROLL_DELAY_MS = 100
 const SUCCESS_RESET_DELAY_MS = 2000
 
-// Form default values
 const DEFAULT_REQUEST_TYPE = 'bug'
+
+const REQUEST_TYPE_OPTIONS = [
+  { label: 'Bug Report', value: 'bug' },
+  { label: 'Feedback', value: 'feedback' },
+  { label: 'Feature Request', value: 'feature_request' },
+  { label: 'Other', value: 'other' },
+]
 
 const formSchema = z.object({
   subject: z.string().min(1, 'Subject is required'),
@@ -58,18 +57,17 @@ interface ImageWithPreview extends File {
 interface HelpModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  workflowId?: string
+  workspaceId: string
 }
 
-export function HelpModal({ open, onOpenChange }: HelpModalProps) {
+export function HelpModal({ open, onOpenChange, workflowId, workspaceId }: HelpModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<'success' | 'error' | null>(null)
-  const [errorMessage, setErrorMessage] = useState('')
   const [images, setImages] = useState<ImageWithPreview[]>([])
-  const [imageError, setImageError] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -78,6 +76,7 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
     handleSubmit,
     reset,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -95,8 +94,6 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
   useEffect(() => {
     if (open) {
       setSubmitStatus(null)
-      setErrorMessage('')
-      setImageError(null)
       setImages([])
       setIsDragging(false)
       setIsProcessing(false)
@@ -107,6 +104,79 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
       })
     }
   }, [open, reset])
+
+  /**
+   * Fix z-index for popover/dropdown when inside modal
+   */
+  useEffect(() => {
+    if (!open) return
+
+    const updatePopoverZIndex = () => {
+      const allDivs = document.querySelectorAll('div')
+      allDivs.forEach((div) => {
+        const element = div as HTMLElement
+        const computedZIndex = window.getComputedStyle(element).zIndex
+        const zIndexNum = Number.parseInt(computedZIndex) || 0
+
+        if (zIndexNum === 10000001 || (zIndexNum > 0 && zIndexNum <= 10000100)) {
+          const hasPopoverStructure =
+            element.hasAttribute('data-radix-popover-content') ||
+            (element.hasAttribute('role') && element.getAttribute('role') === 'dialog') ||
+            element.querySelector('[role="listbox"]') !== null ||
+            element.classList.contains('rounded-[8px]') ||
+            element.classList.contains('rounded-[4px]')
+
+          if (hasPopoverStructure && element.offsetParent !== null) {
+            element.style.zIndex = '10000101'
+          }
+        }
+      })
+    }
+
+    // Create a style element to override popover z-index
+    const styleId = 'help-modal-popover-z-index'
+    let styleElement = document.getElementById(styleId) as HTMLStyleElement | null
+
+    if (!styleElement) {
+      styleElement = document.createElement('style')
+      styleElement.id = styleId
+      document.head.appendChild(styleElement)
+    }
+
+    styleElement.textContent = `
+      [data-radix-popover-content] {
+        z-index: 10000101 !important;
+      }
+      div[style*="z-index: 10000001"],
+      div[style*="z-index:10000001"] {
+        z-index: 10000101 !important;
+      }
+    `
+
+    const observer = new MutationObserver(() => {
+      updatePopoverZIndex()
+    })
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    })
+
+    updatePopoverZIndex()
+
+    const intervalId = setInterval(updatePopoverZIndex, 100)
+
+    return () => {
+      const element = document.getElementById(styleId)
+      if (element) {
+        element.remove()
+      }
+      observer.disconnect()
+      clearInterval(intervalId)
+    }
+  }, [open])
 
   /**
    * Set default form value for request type
@@ -191,8 +261,6 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
    */
   const processFiles = useCallback(
     async (files: FileList | File[]) => {
-      setImageError(null)
-
       if (!files || files.length === 0) return
 
       setIsProcessing(true)
@@ -204,16 +272,12 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
         for (const file of Array.from(files)) {
           // Validate file size
           if (file.size > MAX_FILE_SIZE) {
-            setImageError(`File ${file.name} is too large. Maximum size is 20MB.`)
             hasError = true
             continue
           }
 
           // Validate file type
           if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-            setImageError(
-              `File ${file.name} has an unsupported format. Please use JPEG, PNG, WebP, or GIF.`
-            )
             hasError = true
             continue
           }
@@ -232,7 +296,6 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
         }
       } catch (error) {
         logger.error('Error processing images:', { error })
-        setImageError('An error occurred while processing images. Please try again.')
       } finally {
         setIsProcessing(false)
 
@@ -307,21 +370,22 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
     async (data: FormValues) => {
       setIsSubmitting(true)
       setSubmitStatus(null)
-      setErrorMessage('')
 
       try {
-        // Prepare form data with images
         const formData = new FormData()
         formData.append('subject', data.subject)
         formData.append('message', data.message)
         formData.append('type', data.type)
+        formData.append('workspaceId', workspaceId)
+        formData.append('userAgent', navigator.userAgent)
+        if (workflowId) {
+          formData.append('workflowId', workflowId)
+        }
 
-        // Attach all images to form data
         images.forEach((image, index) => {
           formData.append(`image_${index}`, image)
         })
 
-        // Submit to API
         const response = await fetch('/api/help', {
           method: 'POST',
           body: formData,
@@ -332,22 +396,19 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
           throw new Error(errorData.error || 'Failed to submit help request')
         }
 
-        // Handle success
         setSubmitStatus('success')
         reset()
 
-        // Clean up resources
         images.forEach((image) => URL.revokeObjectURL(image.preview))
         setImages([])
       } catch (error) {
         logger.error('Error submitting help request:', { error })
         setSubmitStatus('error')
-        setErrorMessage(error instanceof Error ? error.message : 'An unknown error occurred')
       } finally {
         setIsSubmitting(false)
       }
     },
-    [images, reset]
+    [images, reset, workflowId, workspaceId]
   )
 
   /**
@@ -358,181 +419,137 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
   }, [onOpenChange])
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className='flex h-[75vh] max-h-[75vh] flex-col gap-0 p-0 sm:max-w-[700px]'>
-        {/* Modal Header */}
-        <AlertDialogHeader className='flex-shrink-0 px-6 py-5'>
-          <AlertDialogTitle className='font-medium text-lg'>Help & Support</AlertDialogTitle>
-        </AlertDialogHeader>
+    <Modal open={open} onOpenChange={onOpenChange}>
+      <ModalContent size='md'>
+        <ModalHeader>Help &amp; Support</ModalHeader>
 
-        {/* Modal Body */}
-        <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
-          <form onSubmit={handleSubmit(onSubmit)} className='flex min-h-0 flex-1 flex-col'>
-            {/* Scrollable Form Content */}
-            <div
-              ref={scrollContainerRef}
-              className='scrollbar-hide min-h-0 flex-1 overflow-y-auto pb-20'
-            >
-              <div className='px-6'>
-                <div className='space-y-4'>
-                  {/* Request Type Field */}
-                  <div className='space-y-1'>
-                    <Label htmlFor='type'>Request</Label>
-                    <Select
-                      defaultValue={DEFAULT_REQUEST_TYPE}
-                      onValueChange={(value) => setValue('type', value as FormValues['type'])}
-                    >
-                      <SelectTrigger
-                        id='type'
-                        className={cn('h-9 rounded-[8px]', errors.type && 'border-red-500')}
-                      >
-                        <SelectValue placeholder='Select a request type' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='bug'>Bug Report</SelectItem>
-                        <SelectItem value='feedback'>Feedback</SelectItem>
-                        <SelectItem value='feature_request'>Feature Request</SelectItem>
-                        <SelectItem value='other'>Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {errors.type && (
-                      <p className='mt-1 text-red-500 text-sm'>{errors.type.message}</p>
-                    )}
-                  </div>
-
-                  {/* Subject Field */}
-                  <div className='space-y-1'>
-                    <Label htmlFor='subject'>Subject</Label>
-                    <Input
-                      id='subject'
-                      placeholder='Brief description of your request'
-                      {...register('subject')}
-                      className={cn('h-9 rounded-[8px]', errors.subject && 'border-red-500')}
-                    />
-                    {errors.subject && (
-                      <p className='mt-1 text-red-500 text-sm'>{errors.subject.message}</p>
-                    )}
-                  </div>
-
-                  {/* Message Field */}
-                  <div className='space-y-1'>
-                    <Label htmlFor='message'>Message</Label>
-                    <Textarea
-                      id='message'
-                      placeholder='Please provide details about your request...'
-                      rows={6}
-                      {...register('message')}
-                      className={cn('rounded-[8px]', errors.message && 'border-red-500')}
-                    />
-                    {errors.message && (
-                      <p className='mt-1 text-red-500 text-sm'>{errors.message.message}</p>
-                    )}
-                  </div>
-
-                  {/* Image Upload Section */}
-                  <div className='mt-6 space-y-1'>
-                    <Label>Attach Images (Optional)</Label>
-                    <div
-                      ref={dropZoneRef}
-                      onDragEnter={handleDragEnter}
-                      onDragOver={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onDrop={handleDrop}
-                      className={cn(
-                        'cursor-pointer rounded-lg border-[1.5px] border-muted-foreground/25 border-dashed p-6 text-center transition-colors hover:bg-muted/50',
-                        isDragging && 'border-primary bg-primary/5'
-                      )}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <input
-                        ref={fileInputRef}
-                        type='file'
-                        accept={ACCEPTED_IMAGE_TYPES.join(',')}
-                        onChange={handleFileChange}
-                        className='hidden'
-                        multiple
-                      />
-                      <p className='text-sm'>
-                        {isDragging ? 'Drop images here!' : 'Drop images here or click to browse'}
-                      </p>
-                      <p className='mt-1 text-muted-foreground text-xs'>
-                        JPEG, PNG, WebP, GIF (max 20MB each)
-                      </p>
-                    </div>
-                    {imageError && <p className='mt-1 text-red-500 text-sm'>{imageError}</p>}
-                    {isProcessing && (
-                      <p className='text-muted-foreground text-sm'>Processing images...</p>
-                    )}
-                  </div>
-
-                  {/* Image Preview Grid */}
-                  {images.length > 0 && (
-                    <div className='space-y-1'>
-                      <Label>Uploaded Images</Label>
-                      <div className='grid grid-cols-2 gap-4'>
-                        {images.map((image, index) => (
-                          <div
-                            key={index}
-                            className='group relative overflow-hidden rounded-md border'
-                          >
-                            <div className='relative aspect-video'>
-                              <Image
-                                src={image.preview}
-                                alt={`Preview ${index + 1}`}
-                                fill
-                                className='object-cover'
-                              />
-                              <div
-                                className='absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100'
-                                onClick={() => removeImage(index)}
-                              >
-                                <X className='h-6 w-6 text-white' />
-                              </div>
-                            </div>
-                            <div className='truncate bg-muted/50 p-2 text-xs'>{image.name}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+        <form onSubmit={handleSubmit(onSubmit)} className='flex min-h-0 flex-1 flex-col'>
+          <ModalBody>
+            <div ref={scrollContainerRef} className='min-h-0 flex-1 overflow-y-auto'>
+              <div className='space-y-[12px]'>
+                <div className='flex flex-col gap-[8px]'>
+                  <Label htmlFor='type'>Request</Label>
+                  <Combobox
+                    id='type'
+                    options={REQUEST_TYPE_OPTIONS}
+                    value={watch('type') || DEFAULT_REQUEST_TYPE}
+                    selectedValue={watch('type') || DEFAULT_REQUEST_TYPE}
+                    onChange={(value) => setValue('type', value as FormValues['type'])}
+                    placeholder='Select a request type'
+                    editable={false}
+                    filterOptions={false}
+                    className={cn(errors.type && 'border-[var(--text-error)]')}
+                  />
                 </div>
-              </div>
-            </div>
 
-            {/* Fixed Footer with Actions */}
-            <div className='absolute inset-x-0 bottom-0 bg-background'>
-              <div className='flex w-full items-center justify-between px-6 py-4'>
-                <Button variant='outline' onClick={handleClose} type='button'>
-                  Cancel
-                </Button>
-                <Button
-                  type='submit'
-                  disabled={isSubmitting || isProcessing}
-                  variant={
-                    submitStatus === 'error' || submitStatus === 'success' ? 'outline' : 'default'
-                  }
-                  className={cn(
-                    'font-[480] transition-all duration-200',
-                    submitStatus === 'error'
-                      ? 'border border-red-500 bg-transparent text-red-500 hover:bg-red-500 hover:text-white dark:border-red-500 dark:text-red-500 dark:hover:bg-red-500'
-                      : submitStatus === 'success'
-                        ? 'border border-green-500 bg-transparent text-green-500 hover:bg-green-500 hover:text-white dark:border-green-500 dark:text-green-500 dark:hover:bg-green-500'
-                        : 'bg-[var(--brand-primary-hex)] text-muted-foreground shadow-[0_0_0_0_var(--brand-primary-hex)] hover:bg-[var(--brand-primary-hover-hex)] hover:shadow-[0_0_0_4px_rgba(127,47,255,0.15)] disabled:opacity-50 disabled:hover:shadow-none'
-                  )}
-                >
-                  {isSubmitting
-                    ? 'Submitting...'
-                    : submitStatus === 'error'
-                      ? 'Error'
-                      : submitStatus === 'success'
-                        ? 'Success'
-                        : 'Submit'}
-                </Button>
+                <div className='flex flex-col gap-[8px]'>
+                  <Label htmlFor='subject'>Subject</Label>
+                  <Input
+                    id='subject'
+                    placeholder='Brief description of your request'
+                    {...register('subject')}
+                    className={cn(errors.subject && 'border-[var(--text-error)]')}
+                  />
+                </div>
+
+                <div className='flex flex-col gap-[8px]'>
+                  <Label htmlFor='message'>Message</Label>
+                  <Textarea
+                    id='message'
+                    placeholder='Please provide details about your request...'
+                    rows={6}
+                    {...register('message')}
+                    className={cn(errors.message && 'border-[var(--text-error)]')}
+                  />
+                </div>
+
+                <div className='flex flex-col gap-[8px]'>
+                  <Label>Attach Images (Optional)</Label>
+                  <Button
+                    type='button'
+                    variant='default'
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragEnter={handleDragEnter}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={cn(
+                      '!bg-[var(--surface-1)] hover:!bg-[var(--surface-4)] w-full justify-center border border-[var(--border-1)] border-dashed py-[10px]',
+                      {
+                        'border-[var(--surface-7)]': isDragging,
+                      }
+                    )}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type='file'
+                      accept={ACCEPTED_IMAGE_TYPES.join(',')}
+                      onChange={handleFileChange}
+                      className='hidden'
+                      multiple
+                    />
+                    <div className='flex flex-col gap-[2px] text-center'>
+                      <span className='text-[var(--text-primary)]'>
+                        {isDragging ? 'Drop images here' : 'Drop images here or click to browse'}
+                      </span>
+                      <span className='text-[11px] text-[var(--text-tertiary)]'>
+                        PNG, JPEG, WebP, GIF (max 20MB each)
+                      </span>
+                    </div>
+                  </Button>
+                </div>
+
+                {images.length > 0 && (
+                  <div className='space-y-2'>
+                    <Label>Uploaded Images</Label>
+                    <div className='grid grid-cols-2 gap-3'>
+                      {images.map((image, index) => (
+                        <div
+                          className='group relative overflow-hidden rounded-[4px] border'
+                          key={index}
+                        >
+                          <div className='relative flex max-h-[120px] min-h-[80px] w-full items-center justify-center'>
+                            <Image
+                              src={image.preview}
+                              alt={`Preview ${index + 1}`}
+                              fill
+                              unoptimized
+                              className='object-contain'
+                            />
+                            <button
+                              type='button'
+                              className='absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100'
+                              onClick={() => removeImage(index)}
+                            >
+                              <X className='h-[18px] w-[18px] text-white' />
+                            </button>
+                          </div>
+                          <div className='truncate p-[6px] text-[12px]'>{image.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          </form>
-        </div>
-      </AlertDialogContent>
-    </AlertDialog>
+          </ModalBody>
+
+          <ModalFooter>
+            <Button variant='default' onClick={handleClose} type='button' disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type='submit' variant='tertiary' disabled={isSubmitting || isProcessing}>
+              {isSubmitting
+                ? 'Submitting...'
+                : submitStatus === 'error'
+                  ? 'Error'
+                  : submitStatus === 'success'
+                    ? 'Success'
+                    : 'Submit'}
+            </Button>
+          </ModalFooter>
+        </form>
+      </ModalContent>
+    </Modal>
   )
 }

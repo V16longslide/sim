@@ -1,11 +1,12 @@
 import { db } from '@sim/db'
 import { subscription as subscriptionTable, user } from '@sim/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { createLogger } from '@sim/logger'
+import { and, eq, or } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
+import { isOrganizationOwnerOrAdmin } from '@/lib/billing/core/organization'
 import { requireStripeClient } from '@/lib/billing/stripe-client'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
+import { getBaseUrl } from '@/lib/core/utils/urls'
 
 const logger = createLogger('BillingPortal')
 
@@ -21,8 +22,7 @@ export async function POST(request: NextRequest) {
     const context: 'user' | 'organization' =
       body?.context === 'organization' ? 'organization' : 'user'
     const organizationId: string | undefined = body?.organizationId || undefined
-    const returnUrl: string =
-      body?.returnUrl || `${env.NEXT_PUBLIC_APP_URL}/workspace?billing=updated`
+    const returnUrl: string = body?.returnUrl || `${getBaseUrl()}/workspace?billing=updated`
 
     const stripe = requireStripeClient()
 
@@ -33,13 +33,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'organizationId is required' }, { status: 400 })
       }
 
+      const hasPermission = await isOrganizationOwnerOrAdmin(session.user.id, organizationId)
+      if (!hasPermission) {
+        return NextResponse.json({ error: 'Permission denied' }, { status: 403 })
+      }
+
       const rows = await db
         .select({ customer: subscriptionTable.stripeCustomerId })
         .from(subscriptionTable)
         .where(
           and(
             eq(subscriptionTable.referenceId, organizationId),
-            eq(subscriptionTable.status, 'active')
+            or(
+              eq(subscriptionTable.status, 'active'),
+              eq(subscriptionTable.cancelAtPeriodEnd, true)
+            )
           )
         )
         .limit(1)

@@ -1,13 +1,13 @@
 import { ClayIcon } from '@/components/icons'
-import type { BlockConfig } from '@/blocks/types'
+import { AuthMode, type BlockConfig } from '@/blocks/types'
 import type { ClayPopulateResponse } from '@/tools/clay/types'
 
 export const ClayBlock: BlockConfig<ClayPopulateResponse> = {
   type: 'clay',
   name: 'Clay',
   description: 'Populate Clay workbook',
-  longDescription:
-    'Integrate Clay into the workflow. Can populate a table with data. Requires an API Key.',
+  authMode: AuthMode.ApiKey,
+  longDescription: 'Integrate Clay into the workflow. Can populate a table with data.',
   docsLink: 'https://docs.sim.ai/tools/clay',
   category: 'tools',
   bgColor: '#E0E0E0',
@@ -17,7 +17,6 @@ export const ClayBlock: BlockConfig<ClayPopulateResponse> = {
       id: 'webhookURL',
       title: 'Webhook URL',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter Clay webhook URL',
       required: true,
     },
@@ -25,23 +24,31 @@ export const ClayBlock: BlockConfig<ClayPopulateResponse> = {
       id: 'data',
       title: 'Data (JSON or Plain Text)',
       type: 'long-input',
-      layout: 'full',
       placeholder: 'Enter your JSON data to populate your Clay table',
       required: true,
       description: `JSON vs. Plain Text:
 JSON: Best for populating multiple columns.
 Plain Text: Best for populating a table in free-form style.
       `,
+      wandConfig: {
+        enabled: true,
+        prompt:
+          'Generate JSON data structure or plain text content based on the user description. For JSON, create a well-structured object or array with appropriate keys and sample values. Return ONLY the data content - no explanations, no extra formatting.',
+        placeholder:
+          'Describe the data structure you need (e.g., "array of contacts with name, email, and company")...',
+        generationType: 'json-object',
+      },
     },
     {
       id: 'authToken',
       title: 'Auth Token',
       type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter your Clay Auth token',
+      placeholder: 'Enter your Clay webhook auth token',
       password: true,
       connectionDroppable: false,
-      required: true,
+      required: false,
+      description:
+        'Optional: If your Clay table has webhook authentication enabled, enter the auth token here. This will be sent in the x-clay-webhook-auth header.',
     },
   ],
   tools: {
@@ -53,6 +60,10 @@ Plain Text: Best for populating a table in free-form style.
     data: { type: 'json', description: 'Data to populate' },
   },
   outputs: {
-    data: { type: 'json', description: 'Response data' },
+    data: { type: 'json', description: 'Response data from Clay webhook' },
+    metadata: {
+      type: 'json',
+      description: 'Webhook metadata including status, headers, timestamp, and content type',
+    },
   },
 }

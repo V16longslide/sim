@@ -1,16 +1,11 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { SnapshotService } from '@/lib/logs/execution/snapshot/service'
 import type { WorkflowState } from '@/lib/logs/types'
 
 describe('SnapshotService', () => {
-  let service: SnapshotService
-
-  beforeEach(() => {
-    service = new SnapshotService()
-  })
-
   describe('computeStateHash', () => {
-    test('should generate consistent hashes for identical states', () => {
+    it.concurrent('should generate consistent hashes for identical states', () => {
+      const service = new SnapshotService()
       const state: WorkflowState = {
         blocks: {
           block1: {
@@ -23,7 +18,6 @@ describe('SnapshotService', () => {
             outputs: {},
             enabled: true,
             horizontalHandles: true,
-            isWide: false,
             advancedMode: false,
             height: 0,
           },
@@ -40,7 +34,8 @@ describe('SnapshotService', () => {
       expect(hash1).toHaveLength(64) // SHA-256 hex string
     })
 
-    test('should ignore position changes', () => {
+    it.concurrent('should ignore position changes', () => {
+      const service = new SnapshotService()
       const baseState: WorkflowState = {
         blocks: {
           block1: {
@@ -53,7 +48,6 @@ describe('SnapshotService', () => {
             outputs: {},
             enabled: true,
             horizontalHandles: true,
-            isWide: false,
             advancedMode: false,
             height: 0,
           },
@@ -79,7 +73,8 @@ describe('SnapshotService', () => {
       expect(hash1).toBe(hash2)
     })
 
-    test('should detect meaningful changes', () => {
+    it.concurrent('should detect meaningful changes', () => {
+      const service = new SnapshotService()
       const baseState: WorkflowState = {
         blocks: {
           block1: {
@@ -88,11 +83,16 @@ describe('SnapshotService', () => {
             type: 'agent',
             position: { x: 100, y: 200 },
 
-            subBlocks: {},
+            subBlocks: {
+              prompt: {
+                id: 'prompt',
+                type: 'short-input',
+                value: 'Hello world',
+              },
+            },
             outputs: {},
             enabled: true,
             horizontalHandles: true,
-            isWide: false,
             advancedMode: false,
             height: 0,
           },
@@ -107,8 +107,14 @@ describe('SnapshotService', () => {
         blocks: {
           block1: {
             ...baseState.blocks.block1,
-            // Different block state - we can change outputs to make it different
-            outputs: { response: { content: 'different result' } as Record<string, any> },
+            // Different subBlock value - this is a meaningful change
+            subBlocks: {
+              prompt: {
+                id: 'prompt',
+                type: 'short-input',
+                value: 'Different prompt',
+              },
+            },
           },
         },
       }
@@ -119,7 +125,8 @@ describe('SnapshotService', () => {
       expect(hash1).not.toBe(hash2)
     })
 
-    test('should handle edge order consistently', () => {
+    it.concurrent('should handle edge order consistently', () => {
+      const service = new SnapshotService()
       const state1: WorkflowState = {
         blocks: {},
         edges: [
@@ -146,7 +153,8 @@ describe('SnapshotService', () => {
       expect(hash1).toBe(hash2) // Should be same despite different order
     })
 
-    test('should handle empty states', () => {
+    it.concurrent('should handle empty states', () => {
+      const service = new SnapshotService()
       const emptyState: WorkflowState = {
         blocks: {},
         edges: [],
@@ -158,7 +166,8 @@ describe('SnapshotService', () => {
       expect(hash).toHaveLength(64)
     })
 
-    test('should handle complex nested structures', () => {
+    it.concurrent('should handle complex nested structures', () => {
+      const service = new SnapshotService()
       const complexState: WorkflowState = {
         blocks: {
           block1: {
@@ -180,11 +189,10 @@ describe('SnapshotService', () => {
               },
             },
             outputs: {
-              response: { content: 'Agent response' } as Record<string, any>,
+              response: { type: 'string', description: 'Agent response' },
             },
             enabled: true,
             horizontalHandles: true,
-            isWide: false,
             advancedMode: true,
             height: 200,
           },
@@ -214,6 +222,117 @@ describe('SnapshotService', () => {
       // Should be consistent
       const hash2 = service.computeStateHash(complexState)
       expect(hash).toBe(hash2)
+    })
+
+    it.concurrent('should include variables in hash computation', () => {
+      const service = new SnapshotService()
+      const stateWithVariables: WorkflowState = {
+        blocks: {},
+        edges: [],
+        loops: {},
+        parallels: {},
+        variables: {
+          'var-1': {
+            id: 'var-1',
+            name: 'apiKey',
+            type: 'string',
+            value: 'secret123',
+          },
+        },
+      }
+
+      const stateWithoutVariables: WorkflowState = {
+        blocks: {},
+        edges: [],
+        loops: {},
+        parallels: {},
+      }
+
+      const hashWith = service.computeStateHash(stateWithVariables)
+      const hashWithout = service.computeStateHash(stateWithoutVariables)
+
+      expect(hashWith).not.toBe(hashWithout)
+    })
+
+    it.concurrent('should detect changes in variable values', () => {
+      const service = new SnapshotService()
+      const state1: WorkflowState = {
+        blocks: {},
+        edges: [],
+        loops: {},
+        parallels: {},
+        variables: {
+          'var-1': {
+            id: 'var-1',
+            name: 'myVar',
+            type: 'string',
+            value: 'value1',
+          },
+        },
+      }
+
+      const state2: WorkflowState = {
+        blocks: {},
+        edges: [],
+        loops: {},
+        parallels: {},
+        variables: {
+          'var-1': {
+            id: 'var-1',
+            name: 'myVar',
+            type: 'string',
+            value: 'value2', // Different value
+          },
+        },
+      }
+
+      const hash1 = service.computeStateHash(state1)
+      const hash2 = service.computeStateHash(state2)
+
+      expect(hash1).not.toBe(hash2)
+    })
+
+    it.concurrent('should generate consistent hashes for states with variables', () => {
+      const service = new SnapshotService()
+      const stateWithVariables: WorkflowState = {
+        blocks: {
+          block1: {
+            id: 'block1',
+            name: 'Test',
+            type: 'agent',
+            position: { x: 0, y: 0 },
+            subBlocks: {},
+            outputs: {},
+            enabled: true,
+            horizontalHandles: true,
+            advancedMode: false,
+            height: 0,
+          },
+        },
+        edges: [],
+        loops: {},
+        parallels: {},
+        variables: {
+          'var-1': {
+            id: 'var-1',
+            name: 'testVar',
+            type: 'plain',
+            value: 'testValue',
+          },
+          'var-2': {
+            id: 'var-2',
+            name: 'anotherVar',
+            type: 'number',
+            value: 42,
+          },
+        },
+      }
+
+      const hash1 = service.computeStateHash(stateWithVariables)
+      const hash2 = service.computeStateHash(stateWithVariables)
+
+      expect(hash1).toBe(hash2)
+      expect(hash1).toHaveLength(64)
     })
   })
 })

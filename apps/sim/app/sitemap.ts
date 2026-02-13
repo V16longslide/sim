@@ -1,44 +1,52 @@
 import type { MetadataRoute } from 'next'
+import { getAllPostMeta } from '@/lib/blog/registry'
+import { getBaseUrl } from '@/lib/core/utils/urls'
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://sim.ai'
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const baseUrl = getBaseUrl()
 
-  // Static pages
-  const staticPages = [
+  const now = new Date()
+
+  const staticPages: MetadataRoute.Sitemap = [
     {
       url: baseUrl,
-      lastModified: new Date(),
-      changeFrequency: 'daily' as const,
-      priority: 1,
+      lastModified: now,
     },
     {
-      url: `${baseUrl}/signup`,
-      lastModified: new Date(),
-      changeFrequency: 'weekly' as const,
-      priority: 0.9,
+      url: `${baseUrl}/studio`,
+      lastModified: now,
     },
     {
-      url: `${baseUrl}/login`,
-      lastModified: new Date(),
-      changeFrequency: 'monthly' as const,
-      priority: 0.8,
+      url: `${baseUrl}/studio/tags`,
+      lastModified: now,
+    },
+    {
+      url: `${baseUrl}/templates`,
+      lastModified: now,
+    },
+    {
+      url: `${baseUrl}/changelog`,
+      lastModified: now,
+    },
+    {
+      url: `${baseUrl}/careers`,
+      lastModified: new Date('2024-10-06'),
     },
     {
       url: `${baseUrl}/terms`,
-      lastModified: new Date(),
-      changeFrequency: 'monthly' as const,
-      priority: 0.5,
+      lastModified: new Date('2024-10-14'),
     },
     {
       url: `${baseUrl}/privacy`,
-      lastModified: new Date(),
-      changeFrequency: 'monthly' as const,
-      priority: 0.5,
+      lastModified: new Date('2024-10-14'),
     },
   ]
 
-  // You can add dynamic pages here by fetching from database
-  // const dynamicPages = await fetchDynamicPages()
+  const posts = await getAllPostMeta()
+  const blogPages: MetadataRoute.Sitemap = posts.map((p) => ({
+    url: p.canonical,
+    lastModified: new Date(p.updated ?? p.date),
+  }))
 
-  return [...staticPages]
+  return [...staticPages, ...blogPages]
 }

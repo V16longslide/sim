@@ -8,18 +8,6 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="elevenlabs"
   color="#181C1E"
-  icon={true}
-  iconSvg={`<svg className="block-icon"
-      
-      xmlns='http://www.w3.org/2000/svg'
-      
-      
-      viewBox='0 0 876 876'
-      fill='none'
-    >
-      <path d='M498 138H618V738H498V138Z' fill='currentColor' />
-      <path d='M258 138H378V738H258V138Z' fill='currentColor' />
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
@@ -39,7 +27,7 @@ In Sim, the ElevenLabs integration enables your agents to convert text to lifeli
 
 ## Usage Instructions
 
-Integrate ElevenLabs into the workflow. Can convert text to speech. Requires API key.
+Integrate ElevenLabs into the workflow. Can convert text to speech.
 
 
 
@@ -53,9 +41,11 @@ Convert TTS using ElevenLabs voices
 
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
-| `text` | string | Yes | The text to convert to speech |
-| `voiceId` | string | Yes | The ID of the voice to use |
-| `modelId` | string | No | The ID of the model to use \(defaults to eleven_monolingual_v1\) |
+| `text` | string | Yes | The text to convert to speech \(e.g., "Hello, welcome to our service!"\) |
+| `voiceId` | string | Yes | The ID of the voice to use \(e.g., "21m00Tcm4TlvDq8ikWAM" for Rachel\) |
+| `modelId` | string | No | The ID of the model to use \(e.g., "eleven_multilingual_v2", "eleven_turbo_v2"\). Defaults to eleven_monolingual_v1 |
+| `stability` | number | No | Voice stability setting from 0.0 to 1.0 \(e.g., 0.5 for balanced, 0.75 for more stable\). Higher values produce more consistent output |
+| `similarity` | number | No | Similarity boost setting from 0.0 to 1.0 \(e.g., 0.75 for natural, 1.0 for maximum similarity\). Higher values make the voice more similar to the original |
 | `apiKey` | string | Yes | Your ElevenLabs API key |
 
 #### Output
@@ -63,10 +53,6 @@ Convert TTS using ElevenLabs voices
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
 | `audioUrl` | string | The URL of the generated audio |
+| `audioFile` | file | The generated audio file |
 
 
-
-## Notes
-
-- Category: `tools`
-- Type: `elevenlabs`

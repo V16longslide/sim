@@ -1,7 +1,9 @@
 ---
-title: MCP (Model Context Protocol)
+title: Using MCP Tools
+description: Connect external tools and services using the Model Context Protocol
 ---
 
+import { Image } from '@/components/ui/image'
 import { Video } from '@/components/ui/video'
 import { Callout } from 'fumadocs-ui/components/callout'
 
@@ -16,16 +18,12 @@ MCP is an open standard that enables AI assistants to securely connect to extern
 - Execute custom tools and scripts
 - Maintain secure, controlled access to external resources
 
-## Adding MCP Servers
+## Configuring MCP Servers
 
-MCP servers provide collections of tools that your agents can use. You can add MCP servers in two ways:
-
-### From Workspace Settings
-
-Configure MCP servers at the workspace level so all team members can use them:
+MCP servers provide collections of tools that your agents can use. Configure them in workspace settings:
 
 <div className="mx-auto w-full overflow-hidden rounded-lg">
-  <Video src="mcp-1.mp4" width={700} height={450} />
+  <Video src="mcp/settings-mcp-tools.mp4" width={700} height={450} />
 </div>
 
 1. Navigate to your workspace settings
@@ -35,25 +33,25 @@ Configure MCP servers at the workspace level so all team members can use them:
 5. Save the configuration
 
 <Callout type="info">
-MCP servers configured in workspace settings are available to all workspace members based on their permission levels.
+You can also configure MCP servers directly from the toolbar in an Agent block for quick setup.
 </Callout>
 
-### From Agent Configuration
+### Refresh Tools
 
-You can also add and configure MCP servers directly from within an agent block:
-
-<div className="mx-auto w-full overflow-hidden rounded-lg">
-  <Video src="mcp-2.mp4" width={700} height={450} />
-</div>
-
-This is useful when you need to quickly set up a specific integration for a particular workflow.
+Click **Refresh** on a server to fetch the latest tool schemas and automatically update any agent blocks using those tools with the new parameter definitions.
 
 ## Using MCP Tools in Agents
 
 Once MCP servers are configured, their tools become available within your agent blocks:
 
-<div className="mx-auto w-full overflow-hidden rounded-lg">
-  <Video src="mcp-3.mp4" width={700} height={450} />
+<div className="flex justify-center">
+  <Image
+    src="/static/blocks/mcp-2.png"
+    alt="Using MCP Tool in Agent Block"
+    width={700}
+    height={450}
+    className="my-6"
+  />
 </div>
 
 1. Open an **Agent** block
@@ -65,8 +63,14 @@ Once MCP servers are configured, their tools become available within your agent 
 
 For more granular control, you can use the dedicated MCP Tool block to execute specific MCP tools:
 
-<div className="mx-auto w-full overflow-hidden rounded-lg">
-  <Video src="mcp-4.mp4" width={700} height={450} />
+<div className="flex justify-center">
+  <Image
+    src="/static/blocks/mcp-3.png"
+    alt="Standalone MCP Tool Block"
+    width={700}
+    height={450}
+    className="my-6"
+  />
 </div>
 
 The MCP Tool block allows you to:

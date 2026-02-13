@@ -1,15 +1,22 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Skeleton, Switch } from '@/components/ui'
-import { useSession } from '@/lib/auth-client'
-import { useSubscriptionUpgrade } from '@/lib/subscription/upgrade'
-import { cn } from '@/lib/utils'
-import { UsageHeader } from '@/app/workspace/[workspaceId]/w/components/sidebar/components/settings-modal/components/shared/usage-header'
+import { createLogger } from '@sim/logger'
+import { Info } from 'lucide-react'
+import { useParams } from 'next/navigation'
+import { Combobox, Label, Switch, Tooltip } from '@/components/emcn'
+import { Skeleton } from '@/components/ui'
+import { useSession } from '@/lib/auth/auth-client'
+import { USAGE_THRESHOLDS } from '@/lib/billing/client/consts'
+import { useSubscriptionUpgrade } from '@/lib/billing/client/upgrade'
+import { getEffectiveSeats } from '@/lib/billing/subscriptions/utils'
+import { cn } from '@/lib/core/utils/cn'
+import { getBaseUrl } from '@/lib/core/utils/urls'
+import { getUserRole } from '@/lib/workspaces/organization/utils'
+import { useUserPermissionsContext } from '@/app/workspace/[workspaceId]/providers/workspace-permissions-provider'
 import {
   CancelSubscription,
+  CreditBalance,
   PlanCard,
-  UsageLimit,
-  type UsageLimitRef,
 } from '@/app/workspace/[workspaceId]/w/components/sidebar/components/settings-modal/components/subscription/components'
 import {
   ENTERPRISE_PLAN_FEATURES,
@@ -20,8 +27,18 @@ import {
   getSubscriptionPermissions,
   getVisiblePlans,
 } from '@/app/workspace/[workspaceId]/w/components/sidebar/components/settings-modal/components/subscription/subscription-permissions'
-import { useOrganizationStore } from '@/stores/organization'
-import { useSubscriptionStore } from '@/stores/subscription/store'
+import { UsageHeader } from '@/app/workspace/[workspaceId]/w/components/sidebar/components/settings-modal/components/usage-header/usage-header'
+import {
+  UsageLimit,
+  type UsageLimitRef,
+} from '@/app/workspace/[workspaceId]/w/components/sidebar/components/settings-modal/components/usage-limit'
+import {
+  useBillingUsageNotifications,
+  useUpdateGeneralSetting,
+} from '@/hooks/queries/general-settings'
+import { useOrganizationBilling, useOrganizations } from '@/hooks/queries/organization'
+import { useSubscriptionData, useUsageLimitData } from '@/hooks/queries/subscription'
+import { useUpdateWorkspaceSettings, useWorkspaceSettings } from '@/hooks/queries/workspace'
 
 const CONSTANTS = {
   UPGRADE_ERROR_TIMEOUT: 3000, // 3 seconds
@@ -31,15 +48,12 @@ const CONSTANTS = {
   INITIAL_TEAM_SEATS: 1,
 } as const
 
-const STYLES = {
-  GRADIENT_BADGE:
-    'gradient-text h-[1.125rem] rounded-[6px] border-gradient-primary/20 bg-gradient-to-b from-gradient-primary via-gradient-secondary to-gradient-primary px-2 py-0 font-medium text-xs cursor-pointer',
-} as const
-
 type TargetPlan = 'pro' | 'team'
 
-interface SubscriptionProps {
-  onOpenChange: (open: boolean) => void
+interface WorkspaceAdmin {
+  userId: string
+  email: string
+  permissionType: string
 }
 
 /**
@@ -47,118 +61,99 @@ interface SubscriptionProps {
  */
 function SubscriptionSkeleton() {
   return (
-    <div className='px-6 pt-4 pb-4'>
-      <div className='flex flex-col gap-2'>
-        {/* Current Plan skeleton - matches usage indicator style */}
-        <div className='mb-2'>
-          <div className='rounded-[8px] border bg-background p-3 shadow-xs'>
-            <div className='space-y-2'>
-              <div className='flex items-center justify-between'>
-                <div className='flex items-center gap-2'>
-                  <Skeleton className='h-5 w-16' />
-                  <Skeleton className='h-[1.125rem] w-14 rounded-[6px]' />
-                </div>
-                <div className='flex items-center gap-1 text-xs tabular-nums'>
-                  <Skeleton className='h-4 w-8' />
-                  <span className='text-muted-foreground'>/</span>
-                  <Skeleton className='h-4 w-8' />
-                </div>
-              </div>
-              <Skeleton className='h-2 w-full rounded' />
+    <div className='flex h-full flex-col gap-[20px]'>
+      {/* UsageHeader skeleton */}
+      <div className='flex flex-col gap-[12px]'>
+        <div className='flex items-center justify-between'>
+          {/* Left side: plan name and usage */}
+          <div className='flex flex-col gap-[4px]'>
+            <div className='flex h-[18px] items-center'>
+              <Skeleton className='h-[12px] w-[40px] rounded-[4px]' />
+            </div>
+            <div className='flex h-[21px] items-center gap-[4px]'>
+              <Skeleton className='h-[14px] w-[50px] rounded-[4px]' />
+              <span className='font-medium text-[14px] text-[var(--text-primary)]'>/</span>
+              <Skeleton className='h-[14px] w-[50px] rounded-[4px]' />
+            </div>
+          </div>
+          {/* Right side: pills */}
+          <div className='flex flex-col items-end gap-[8px]'>
+            <div className='flex w-[100px] items-center gap-[4px]'>
+              {[...Array(5)].map((_, i) => (
+                <Skeleton key={i} className='h-[6px] flex-1 rounded-[2px]' />
+              ))}
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Plan cards skeleton */}
-        <div className='flex flex-col gap-2'>
-          {/* Pro and Team skeleton grid */}
-          <div className='grid grid-cols-2 gap-2'>
-            {/* Pro Plan Card Skeleton */}
-            <div className='flex flex-col rounded-[8px] border p-4'>
-              <div className='mb-4'>
-                <Skeleton className='mb-2 h-5 w-8' />
-                <div className='flex items-baseline'>
-                  <Skeleton className='h-6 w-10' />
-                  <Skeleton className='ml-1 h-3 w-12' />
-                </div>
-              </div>
-              <div className='mb-4 flex-1 space-y-2'>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-20' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-24' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-16' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-20' />
-                </div>
-              </div>
-              <Skeleton className='h-9 w-full rounded-[8px]' />
-            </div>
-
-            {/* Team Plan Card Skeleton */}
-            <div className='flex flex-col rounded-[8px] border p-4'>
-              <div className='mb-4'>
-                <Skeleton className='mb-2 h-5 w-10' />
-                <div className='flex items-baseline'>
-                  <Skeleton className='h-6 w-10' />
-                  <Skeleton className='ml-1 h-3 w-12' />
-                </div>
-              </div>
-              <div className='mb-4 flex-1 space-y-2'>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-24' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-20' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-16' />
-                </div>
-                <div className='flex items-start gap-2'>
-                  <Skeleton className='mt-0.5 h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-28' />
-                </div>
-              </div>
-              <Skeleton className='h-9 w-full rounded-[8px]' />
-            </div>
-          </div>
-
-          {/* Enterprise skeleton - horizontal layout */}
-          <div className='flex items-center justify-between rounded-[8px] border p-4'>
-            <div>
-              <Skeleton className='mb-2 h-5 w-20' />
-              <Skeleton className='mb-3 h-3 w-64' />
-              <div className='flex items-center gap-4'>
-                <div className='flex items-center gap-2'>
-                  <Skeleton className='h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-16' />
-                </div>
-                <div className='h-4 w-px bg-border' />
-                <div className='flex items-center gap-2'>
-                  <Skeleton className='h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-20' />
-                </div>
-                <div className='h-4 w-px bg-border' />
-                <div className='flex items-center gap-2'>
-                  <Skeleton className='h-3 w-3 rounded' />
-                  <Skeleton className='h-3 w-20' />
-                </div>
+      {/* Plan Cards */}
+      <div className='flex flex-col gap-[10px]'>
+        {/* Pro and Team Cards Grid */}
+        <div className='grid grid-cols-2 gap-[10px]'>
+          {/* Pro Plan Card */}
+          <article className='flex flex-1 flex-col overflow-hidden rounded-[6px] border border-[var(--border-1)] bg-[var(--surface-5)]'>
+            <div className='flex items-center justify-between gap-[8px] px-[14px] py-[10px]'>
+              <Skeleton className='h-[14px] w-[24px] rounded-[4px]' />
+              <div className='flex items-baseline'>
+                <Skeleton className='h-[14px] w-[28px] rounded-[4px]' />
+                <Skeleton className='ml-[4px] h-[12px] w-[40px] rounded-[4px]' />
               </div>
             </div>
-            <Skeleton className='h-9 w-16 rounded-[8px]' />
-          </div>
+            <div className='flex flex-1 flex-col gap-[16px] rounded-t-[8px] border-[var(--border-1)] border-t bg-[var(--surface-4)] px-[14px] py-[16px]'>
+              <ul className='flex flex-1 flex-col gap-[14px]'>
+                {[...Array(6)].map((_, i) => (
+                  <li key={i} className='flex items-center gap-[8px]'>
+                    <Skeleton className='h-[12px] w-[12px] flex-shrink-0 rounded-[4px]' />
+                    <Skeleton className='h-[12px] w-[120px] rounded-[4px]' />
+                  </li>
+                ))}
+              </ul>
+              <Skeleton className='h-[28px] w-full rounded-[5px]' />
+            </div>
+          </article>
+
+          {/* Team Plan Card */}
+          <article className='flex flex-1 flex-col overflow-hidden rounded-[6px] border border-[var(--border-1)] bg-[var(--surface-5)]'>
+            <div className='flex items-center justify-between gap-[8px] px-[14px] py-[10px]'>
+              <Skeleton className='h-[14px] w-[32px] rounded-[4px]' />
+              <div className='flex items-baseline'>
+                <Skeleton className='h-[14px] w-[28px] rounded-[4px]' />
+                <Skeleton className='ml-[4px] h-[12px] w-[40px] rounded-[4px]' />
+              </div>
+            </div>
+            <div className='flex flex-1 flex-col gap-[16px] rounded-t-[8px] border-[var(--border-1)] border-t bg-[var(--surface-4)] px-[14px] py-[16px]'>
+              <ul className='flex flex-1 flex-col gap-[14px]'>
+                {[...Array(5)].map((_, i) => (
+                  <li key={i} className='flex items-center gap-[8px]'>
+                    <Skeleton className='h-[12px] w-[12px] flex-shrink-0 rounded-[4px]' />
+                    <Skeleton className='h-[12px] w-[130px] rounded-[4px]' />
+                  </li>
+                ))}
+              </ul>
+              <Skeleton className='h-[28px] w-full rounded-[5px]' />
+            </div>
+          </article>
         </div>
+
+        {/* Enterprise Card - inlineButton layout */}
+        <article className='flex flex-1 flex-col overflow-hidden rounded-[6px] border border-[var(--border-1)] bg-[var(--surface-5)]'>
+          <div className='flex items-center justify-between gap-[8px] px-[14px] py-[10px]'>
+            <Skeleton className='h-[14px] w-[64px] rounded-[4px]' />
+            <div className='flex items-baseline' />
+          </div>
+          <div className='flex items-center justify-between gap-[16px] rounded-t-[8px] border-[var(--border-1)] border-t bg-[var(--surface-4)] px-[14px] py-[12px]'>
+            <ul className='flex flex-row flex-wrap items-center gap-x-[16px] gap-y-[8px]'>
+              {[...Array(5)].map((_, i) => (
+                <li key={i} className='flex items-center gap-[8px]'>
+                  <Skeleton className='h-[12px] w-[12px] flex-shrink-0 rounded-[4px]' />
+                  <Skeleton className='h-[12px] w-[100px] rounded-[4px]' />
+                </li>
+              ))}
+            </ul>
+            <Skeleton className='h-[28px] w-[64px] flex-shrink-0 rounded-[5px]' />
+          </div>
+        </article>
       </div>
     </div>
   )
@@ -170,38 +165,95 @@ const formatPlanName = (plan: string): string => plan.charAt(0).toUpperCase() + 
  * Subscription management component
  * Handles plan display, upgrades, and billing management
  */
-export function Subscription({ onOpenChange }: SubscriptionProps) {
+export function Subscription() {
   const { data: session } = useSession()
   const { handleUpgrade } = useSubscriptionUpgrade()
+  const params = useParams()
+  const workspaceId = (params?.workspaceId as string) || ''
+  const userPermissions = useUserPermissionsContext()
+  const canManageWorkspaceKeys = userPermissions.canAdmin
+  const logger = createLogger('Subscription')
 
   const {
-    isLoading,
-    getSubscriptionStatus,
-    getUsage,
-    getBillingStatus,
-    usageLimitData,
-    subscriptionData,
-  } = useSubscriptionStore()
+    data: subscriptionData,
+    isLoading: isSubscriptionLoading,
+    refetch: refetchSubscription,
+  } = useSubscriptionData()
+  const { data: usageLimitResponse, isLoading: isUsageLimitLoading } = useUsageLimitData()
+  const { data: workspaceData, isLoading: isWorkspaceLoading } = useWorkspaceSettings(workspaceId)
+  const updateWorkspaceMutation = useUpdateWorkspaceSettings()
 
-  const { activeOrganization, organizationBillingData, loadOrganizationBillingData, getUserRole } =
-    useOrganizationStore()
+  const { data: orgsData } = useOrganizations()
+  const activeOrganization = orgsData?.activeOrganization
+  const activeOrgId = activeOrganization?.id
+
+  const { data: organizationBillingData, isLoading: isOrgBillingLoading } = useOrganizationBilling(
+    activeOrgId || ''
+  )
 
   const [upgradeError, setUpgradeError] = useState<'pro' | 'team' | null>(null)
   const usageLimitRef = useRef<UsageLimitRef | null>(null)
 
-  // Get real subscription data from store
-  const subscription = getSubscriptionStatus()
-  const usage = getUsage()
-  const billingStatus = getBillingStatus()
-  const activeOrgId = activeOrganization?.id
+  const isOrgPlan =
+    subscriptionData?.data?.plan === 'team' || subscriptionData?.data?.plan === 'enterprise'
+  const isLoading =
+    isSubscriptionLoading ||
+    isUsageLimitLoading ||
+    isWorkspaceLoading ||
+    (isOrgPlan && isOrgBillingLoading)
 
-  useEffect(() => {
-    if ((subscription.isTeam || subscription.isEnterprise) && activeOrgId) {
-      loadOrganizationBillingData(activeOrgId)
+  const subscription = {
+    isFree: subscriptionData?.data?.plan === 'free' || !subscriptionData?.data?.plan,
+    isPro: subscriptionData?.data?.plan === 'pro',
+    isTeam: subscriptionData?.data?.plan === 'team',
+    isEnterprise: subscriptionData?.data?.plan === 'enterprise',
+    isPaid:
+      subscriptionData?.data?.plan &&
+      ['pro', 'team', 'enterprise'].includes(subscriptionData.data.plan) &&
+      subscriptionData?.data?.status === 'active',
+    plan: subscriptionData?.data?.plan || 'free',
+    status: subscriptionData?.data?.status || 'inactive',
+    seats: getEffectiveSeats(subscriptionData?.data),
+  }
+
+  const usage = {
+    current: subscriptionData?.data?.usage?.current || 0,
+    limit: subscriptionData?.data?.usage?.limit || 0,
+    percentUsed: subscriptionData?.data?.usage?.percentUsed || 0,
+  }
+
+  const usageLimitData = {
+    currentLimit: usageLimitResponse?.data?.currentLimit || 0,
+    minimumLimit: usageLimitResponse?.data?.minimumLimit || (subscription.isPro ? 20 : 40),
+  }
+
+  const isBlocked = Boolean(subscriptionData?.data?.billingBlocked)
+  const blockedReason = subscriptionData?.data?.billingBlockedReason as
+    | 'payment_failed'
+    | 'dispute'
+    | null
+  const isDispute = isBlocked && blockedReason === 'dispute'
+  const isCritical = isBlocked || usage.percentUsed >= USAGE_THRESHOLDS.CRITICAL
+
+  const billedAccountUserId = workspaceData?.settings?.workspace?.billedAccountUserId ?? null
+  const workspaceAdmins: WorkspaceAdmin[] =
+    workspaceData?.permissions?.users?.filter(
+      (user: WorkspaceAdmin) => user.permissionType === 'admin'
+    ) || []
+
+  const updateWorkspaceSettings = async (updates: { billedAccountUserId?: string }) => {
+    if (!workspaceId) return
+    try {
+      await updateWorkspaceMutation.mutateAsync({
+        workspaceId,
+        ...updates,
+      })
+    } catch (error) {
+      logger.error('Error updating workspace settings:', { error })
+      throw error
     }
-  }, [activeOrgId, subscription.isTeam, subscription.isEnterprise, loadOrganizationBillingData])
+  }
 
-  // Auto-clear upgrade error
   useEffect(() => {
     if (upgradeError) {
       const timer = setTimeout(() => {
@@ -211,11 +263,9 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
     }
   }, [upgradeError])
 
-  // User role and permissions
-  const userRole = getUserRole(session?.user?.email)
+  const userRole = getUserRole(activeOrganization, session?.user?.email)
   const isTeamAdmin = ['owner', 'admin'].includes(userRole)
 
-  // Get permissions based on subscription state and user role
   const permissions = getSubscriptionPermissions(
     {
       isFree: subscription.isFree,
@@ -232,7 +282,6 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
     }
   )
 
-  // Get visible plans based on current subscription
   const visiblePlans = getVisiblePlans(
     {
       isFree: subscription.isFree,
@@ -249,17 +298,25 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
     }
   )
 
-  // UI state computed values
-  const showBadge = permissions.canEditUsageLimit && !permissions.showTeamMemberView
-  const badgeText = subscription.isFree ? 'Upgrade' : 'Increase Limit'
+  const showBadge =
+    (permissions.canEditUsageLimit && !permissions.showTeamMemberView) ||
+    permissions.showTeamMemberView ||
+    subscription.isEnterprise ||
+    isBlocked
 
-  const handleBadgeClick = () => {
-    if (subscription.isFree) {
-      handleUpgrade('pro')
-    } else if (permissions.canEditUsageLimit && usageLimitRef.current) {
-      usageLimitRef.current.startEdit()
+  const getBadgeConfig = (): { text: string; variant: 'blue-secondary' | 'red' } => {
+    if (permissions.showTeamMemberView || subscription.isEnterprise) {
+      return { text: `${subscription.seats} seats`, variant: 'blue-secondary' }
     }
+    if (isDispute) return { text: 'Get Help', variant: 'red' }
+    if (isBlocked) return { text: 'Fix Now', variant: 'red' }
+    if (subscription.isFree) return { text: 'Upgrade', variant: 'blue-secondary' }
+    if (isCritical && permissions.canEditUsageLimit) {
+      return { text: 'Increase Limit', variant: 'red' }
+    }
+    return { text: 'Increase Limit', variant: 'blue-secondary' }
   }
+  const badgeConfig = getBadgeConfig()
 
   const handleUpgradeWithErrorHandling = useCallback(
     async (targetPlan: TargetPlan) => {
@@ -272,8 +329,62 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
     [handleUpgrade]
   )
 
+  const handleBadgeClick = useCallback(async () => {
+    // Dispute: open help modal
+    if (isDispute) {
+      window.dispatchEvent(new CustomEvent('open-help-modal'))
+      return
+    }
+
+    // Blocked: open billing portal
+    if (isBlocked) {
+      try {
+        const context = subscription.isTeam || subscription.isEnterprise ? 'organization' : 'user'
+        const res = await fetch('/api/billing/portal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            context,
+            organizationId: activeOrgId,
+            returnUrl: `${getBaseUrl()}/workspace?billing=updated`,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok || !data?.url) {
+          throw new Error(data?.error || 'Failed to start billing portal')
+        }
+        window.location.href = data.url
+      } catch (e) {
+        logger.error('Failed to open billing portal', { error: e })
+        alert(e instanceof Error ? e.message : 'Failed to open billing portal')
+      }
+      return
+    }
+
+    // Free: upgrade to pro
+    if (subscription.isFree) {
+      handleUpgradeWithErrorHandling('pro')
+      return
+    }
+
+    // Paid: edit usage limit
+    if (permissions.canEditUsageLimit && usageLimitRef.current) {
+      usageLimitRef.current.startEdit()
+    }
+  }, [
+    isDispute,
+    isBlocked,
+    subscription.isFree,
+    subscription.isTeam,
+    subscription.isEnterprise,
+    activeOrgId,
+    permissions.canEditUsageLimit,
+    handleUpgradeWithErrorHandling,
+    logger,
+  ])
+
   const renderPlanCard = useCallback(
-    (planType: 'pro' | 'team' | 'enterprise', layout: 'vertical' | 'horizontal' = 'vertical') => {
+    (planType: 'pro' | 'team' | 'enterprise', options?: { horizontal?: boolean }) => {
       const handleContactEnterprise = () => window.open(CONSTANTS.TYPEFORM_ENTERPRISE_URL, '_blank')
 
       switch (planType) {
@@ -288,7 +399,6 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
               buttonText={subscription.isFree ? 'Upgrade' : 'Upgrade to Pro'}
               onButtonClick={() => handleUpgradeWithErrorHandling('pro')}
               isError={upgradeError === 'pro'}
-              layout={layout}
             />
           )
 
@@ -303,7 +413,6 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
               buttonText={subscription.isFree ? 'Upgrade' : 'Upgrade to Team'}
               onButtonClick={() => handleUpgradeWithErrorHandling('team')}
               isError={upgradeError === 'team'}
-              layout={layout}
             />
           )
 
@@ -312,16 +421,11 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
             <PlanCard
               key='enterprise'
               name='Enterprise'
-              price={<span className='font-semibold text-xl'>Custom</span>}
-              priceSubtext={
-                layout === 'horizontal'
-                  ? 'Custom solutions tailored to your enterprise needs'
-                  : undefined
-              }
+              price=''
               features={ENTERPRISE_PLAN_FEATURES}
               buttonText='Contact'
               onButtonClick={handleContactEnterprise}
-              layout={layout}
+              inlineButton={options?.horizontal}
             />
           )
 
@@ -329,7 +433,7 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
           return null
       }
     },
-    [subscription.isFree, upgradeError, handleUpgrade]
+    [subscription.isFree, upgradeError, handleUpgradeWithErrorHandling]
   )
 
   if (isLoading) {
@@ -337,234 +441,216 @@ export function Subscription({ onOpenChange }: SubscriptionProps) {
   }
 
   return (
-    <div className='px-6 pt-4 pb-4'>
-      <div className='flex flex-col gap-2'>
-        {/* Current Plan & Usage Overview - Styled like usage-indicator */}
-        <div className='mb-2'>
-          <UsageHeader
-            title={formatPlanName(subscription.plan)}
-            gradientTitle={!subscription.isFree}
-            showBadge={showBadge}
-            badgeText={badgeText}
-            onBadgeClick={handleBadgeClick}
-            seatsText={
-              permissions.canManageTeam || subscription.isEnterprise
-                ? `${organizationBillingData?.totalSeats || subscription.seats || 1} seats`
-                : undefined
-            }
-            current={
-              subscription.isEnterprise || subscription.isTeam
-                ? organizationBillingData?.totalCurrentUsage || 0
-                : usage.current
-            }
-            limit={
-              subscription.isEnterprise || subscription.isTeam
-                ? organizationBillingData?.totalUsageLimit ||
-                  organizationBillingData?.minimumBillingAmount ||
-                  0
-                : !subscription.isFree &&
-                    (permissions.canEditUsageLimit || permissions.showTeamMemberView)
-                  ? usage.current // placeholder; rightContent will render UsageLimit
-                  : usage.limit
-            }
-            isBlocked={Boolean(subscriptionData?.billingBlocked)}
-            status={billingStatus === 'unknown' ? 'ok' : billingStatus}
-            percentUsed={
-              subscription.isEnterprise || subscription.isTeam
-                ? organizationBillingData?.totalUsageLimit &&
-                  organizationBillingData.totalUsageLimit > 0
-                  ? Math.round(
-                      (organizationBillingData.totalCurrentUsage /
-                        organizationBillingData.totalUsageLimit) *
-                        100
-                    )
-                  : 0
-                : Math.round(usage.percentUsed)
-            }
-            onResolvePayment={async () => {
-              try {
-                const res = await fetch('/api/billing/portal', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    context:
-                      subscription.isTeam || subscription.isEnterprise ? 'organization' : 'user',
-                    organizationId: activeOrgId,
-                    returnUrl: `${window.location.origin}/workspace?billing=updated`,
-                  }),
-                })
-                const data = await res.json()
-                if (!res.ok || !data?.url)
-                  throw new Error(data?.error || 'Failed to start billing portal')
-                window.location.href = data.url
-              } catch (e) {
-                alert(e instanceof Error ? e.message : 'Failed to open billing portal')
+    <div className='flex h-full flex-col gap-[20px]'>
+      {/* Current Plan & Usage Overview */}
+      <UsageHeader
+        title={formatPlanName(subscription.plan)}
+        showBadge={showBadge}
+        badgeText={badgeConfig.text}
+        badgeVariant={badgeConfig.variant}
+        onBadgeClick={permissions.showTeamMemberView ? undefined : handleBadgeClick}
+        seatsText={
+          permissions.canManageTeam || subscription.isEnterprise
+            ? `${subscription.seats} seats`
+            : undefined
+        }
+        current={usage.current}
+        limit={
+          subscription.isEnterprise || subscription.isTeam
+            ? organizationBillingData?.data?.totalUsageLimit
+            : !subscription.isFree &&
+                (permissions.canEditUsageLimit || permissions.showTeamMemberView)
+              ? usage.current // placeholder; rightContent will render UsageLimit
+              : usage.limit
+        }
+        isBlocked={isBlocked}
+        progressValue={Math.min(usage.percentUsed, 100)}
+        rightContent={
+          !subscription.isFree &&
+          (permissions.canEditUsageLimit || permissions.showTeamMemberView) ? (
+            <UsageLimit
+              ref={usageLimitRef}
+              currentLimit={
+                (subscription.isTeam || subscription.isEnterprise) &&
+                isTeamAdmin &&
+                organizationBillingData?.data
+                  ? organizationBillingData.data.totalUsageLimit
+                  : usageLimitData.currentLimit || usage.limit
               }
-            }}
-            rightContent={
-              !subscription.isFree &&
-              (permissions.canEditUsageLimit || permissions.showTeamMemberView) ? (
-                <UsageLimit
-                  ref={usageLimitRef}
-                  currentLimit={
-                    subscription.isTeam && isTeamAdmin
-                      ? organizationBillingData?.totalUsageLimit || usage.limit
-                      : usageLimitData?.currentLimit || usage.limit
-                  }
-                  currentUsage={usage.current}
-                  canEdit={permissions.canEditUsageLimit}
-                  minimumLimit={
-                    subscription.isTeam && isTeamAdmin
-                      ? organizationBillingData?.minimumBillingAmount ||
-                        (subscription.isPro ? 20 : 40)
-                      : usageLimitData?.minimumLimit || (subscription.isPro ? 20 : 40)
-                  }
-                  context={subscription.isTeam && isTeamAdmin ? 'organization' : 'user'}
-                  organizationId={subscription.isTeam && isTeamAdmin ? activeOrgId : undefined}
-                  onLimitUpdated={async () => {
-                    if (subscription.isTeam && isTeamAdmin && activeOrgId) {
-                      await loadOrganizationBillingData(activeOrgId, true)
-                    }
-                  }}
-                />
-              ) : undefined
-            }
-            progressValue={Math.min(Math.round(usage.percentUsed), 100)}
-          />
-        </div>
+              currentUsage={usage.current}
+              canEdit={permissions.canEditUsageLimit}
+              minimumLimit={
+                (subscription.isTeam || subscription.isEnterprise) &&
+                isTeamAdmin &&
+                organizationBillingData?.data
+                  ? organizationBillingData.data.minimumBillingAmount
+                  : usageLimitData.minimumLimit || (subscription.isPro ? 20 : 40)
+              }
+              context={
+                (subscription.isTeam || subscription.isEnterprise) && isTeamAdmin
+                  ? 'organization'
+                  : 'user'
+              }
+              organizationId={
+                (subscription.isTeam || subscription.isEnterprise) && isTeamAdmin
+                  ? activeOrgId
+                  : undefined
+              }
+              onLimitUpdated={() => {
+                logger.info('Usage limit updated')
+              }}
+            />
+          ) : undefined
+        }
+      />
 
-        {/* Team Member Notice */}
-        {permissions.showTeamMemberView && (
-          <div className='text-center'>
-            <p className='text-muted-foreground text-xs'>
-              Contact your team admin to increase limits
-            </p>
-          </div>
-        )}
+      {/* Upgrade Plans */}
+      {permissions.showUpgradePlans && (
+        <div className='flex flex-col gap-[10px]'>
+          {/* Render plans based on what should be visible */}
+          {(() => {
+            const hasEnterprise = visiblePlans.includes('enterprise')
+            const nonEnterprisePlans = visiblePlans.filter((plan) => plan !== 'enterprise')
 
-        {/* Upgrade Plans */}
-        {permissions.showUpgradePlans && (
-          <div className='flex flex-col gap-2'>
-            {/* Render plans based on what should be visible */}
-            {(() => {
-              const totalPlans = visiblePlans.length
-              const hasEnterprise = visiblePlans.includes('enterprise')
+            // Free users: Pro + Team in 2-col grid, Enterprise horizontal
+            // Pro users: Team + Enterprise both vertical (single column)
+            // Team admins: Enterprise only (horizontal)
+            const showEnterpriseHorizontal =
+              subscription.isFree || (subscription.isTeam && isTeamAdmin)
 
-              // Special handling for Pro users - show team and enterprise side by side
-              if (subscription.isPro && totalPlans === 2) {
-                return (
-                  <div className='grid grid-cols-2 gap-2'>
-                    {visiblePlans.map((plan) => renderPlanCard(plan, 'vertical'))}
+            return (
+              <>
+                {nonEnterprisePlans.length > 0 && (
+                  <div
+                    className={cn(
+                      'grid gap-[10px]',
+                      nonEnterprisePlans.length === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                    )}
+                  >
+                    {nonEnterprisePlans.map((plan) => renderPlanCard(plan))}
                   </div>
-                )
-              }
+                )}
+                {hasEnterprise &&
+                  renderPlanCard('enterprise', { horizontal: showEnterpriseHorizontal })}
+              </>
+            )
+          })()}
+        </div>
+      )}
 
-              // Default behavior for other users
-              const otherPlans = visiblePlans.filter((p) => p !== 'enterprise')
+      {/* Credit Balance */}
+      {subscription.isPaid && (
+        <CreditBalance
+          balance={subscriptionData?.data?.creditBalance ?? 0}
+          canPurchase={permissions.canEditUsageLimit}
+          entityType={subscription.isTeam || subscription.isEnterprise ? 'organization' : 'user'}
+          isLoading={isLoading}
+          onPurchaseComplete={() => refetchSubscription()}
+        />
+      )}
 
-              // Layout logic:
-              // Free users (3 plans): Pro and Team vertical in grid, Enterprise horizontal below
-              // Team admins (1 plan): Enterprise horizontal
-              const enterpriseLayout =
-                totalPlans === 1 || totalPlans === 3 ? 'horizontal' : 'vertical'
-
-              return (
-                <>
-                  {otherPlans.length > 0 && (
-                    <div
-                      className={cn(
-                        'grid gap-2',
-                        otherPlans.length === 1 ? 'grid-cols-1' : 'grid-cols-2'
-                      )}
-                    >
-                      {otherPlans.map((plan) => renderPlanCard(plan, 'vertical'))}
-                    </div>
-                  )}
-
-                  {/* Enterprise plan */}
-                  {hasEnterprise && renderPlanCard('enterprise', enterpriseLayout)}
-                </>
-              )
-            })()}
-          </div>
-        )}
-
-        {/* Next Billing Date */}
-        {subscription.isPaid && subscriptionData?.periodEnd && (
-          <div className='mt-4 flex items-center justify-between'>
-            <span className='font-medium text-sm'>Next Billing Date</span>
-            <span className='text-muted-foreground text-sm'>
-              {new Date(subscriptionData.periodEnd).toLocaleDateString()}
+      {/* Next Billing Date - hidden from team members */}
+      {subscription.isPaid &&
+        subscriptionData?.data?.periodEnd &&
+        !permissions.showTeamMemberView && (
+          <div className='flex items-center justify-between'>
+            <Label>Next Billing Date</Label>
+            <span className='text-[12px] text-[var(--text-secondary)]'>
+              {new Date(subscriptionData.data.periodEnd).toLocaleDateString()}
             </span>
           </div>
         )}
 
-        {/* Billing usage notifications toggle */}
-        {subscription.isPaid && <BillingUsageNotificationsToggle />}
+      {/* Usage notifications */}
+      {subscription.isPaid && <BillingUsageNotificationsToggle />}
 
-        {subscription.isEnterprise && (
-          <div className='text-center'>
-            <p className='text-muted-foreground text-xs'>
-              Contact enterprise for support usage limit changes
-            </p>
-          </div>
-        )}
+      {/* Cancel Subscription */}
+      {permissions.canCancelSubscription && (
+        <CancelSubscription
+          subscription={{
+            plan: subscription.plan,
+            status: subscription.status,
+            isPaid: subscription.isPaid,
+          }}
+          subscriptionData={{
+            periodEnd: subscriptionData?.data?.periodEnd || null,
+            cancelAtPeriodEnd: subscriptionData?.data?.cancelAtPeriodEnd,
+          }}
+        />
+      )}
 
-        {/* Cancel Subscription */}
-        {permissions.canCancelSubscription && (
-          <div className='mt-2'>
-            <CancelSubscription
-              subscription={{
-                plan: subscription.plan,
-                status: subscription.status,
-                isPaid: subscription.isPaid,
-              }}
-              subscriptionData={{
-                periodEnd: subscriptionData?.periodEnd || null,
-              }}
-            />
+      {/* Billed Account for Workspace - Only visible to team admins */}
+      {!isLoading && isTeamAdmin && (
+        <div className='mt-auto flex items-center justify-between'>
+          <div className='flex items-center gap-[6px]'>
+            <Label htmlFor='billed-account'>Billed Account</Label>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <Info className='h-[12px] w-[12px] text-[var(--text-secondary)]' />
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <span>Usage from this workspace will be billed to this account</span>
+              </Tooltip.Content>
+            </Tooltip.Root>
           </div>
-        )}
-      </div>
+          {workspaceAdmins.length === 0 ? (
+            <div className='rounded-[6px] border border-[var(--border)] border-dashed px-[12px] py-[6px] text-[12px] text-[var(--text-muted)]'>
+              No admins available
+            </div>
+          ) : (
+            <div className='w-[200px]'>
+              <Combobox
+                size='sm'
+                align='end'
+                dropdownWidth={200}
+                value={billedAccountUserId || ''}
+                onChange={async (value: string) => {
+                  if (value && value !== billedAccountUserId) {
+                    try {
+                      await updateWorkspaceSettings({ billedAccountUserId: value })
+                    } catch {
+                      // Error is already logged in updateWorkspaceSettings
+                    }
+                  }
+                }}
+                disabled={!canManageWorkspaceKeys || updateWorkspaceMutation.isPending}
+                placeholder='Select admin'
+                options={workspaceAdmins.map((admin) => ({
+                  label: admin.email,
+                  value: admin.userId,
+                }))}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 function BillingUsageNotificationsToggle() {
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let isMounted = true
-    const load = async () => {
-      const res = await fetch('/api/users/me/settings')
-      const json = await res.json()
-      const current = json?.data?.billingUsageNotificationsEnabled
-      if (isMounted) setEnabled(current !== false)
-    }
-    load()
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
-  const update = async (next: boolean) => {
-    setEnabled(next)
-    await fetch('/api/users/me/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ billingUsageNotificationsEnabled: next }),
-    })
-  }
-
-  if (enabled === null) return null
+  const enabled = useBillingUsageNotifications()
+  const updateSetting = useUpdateGeneralSetting()
+  const isLoading = updateSetting.isPending
 
   return (
-    <div className='mt-4 flex items-center justify-between'>
-      <div className='flex flex-col'>
-        <span className='font-medium text-sm'>Usage notifications</span>
-        <span className='text-muted-foreground text-xs'>Email me when I reach 80% usage</span>
+    <div className='flex items-center justify-between'>
+      <div className='flex flex-col gap-[4px]'>
+        <Label htmlFor='usage-notifications'>Usage notifications</Label>
+        <span className='text-[12px] text-[var(--text-muted)]'>
+          Email me when I reach 80% usage
+        </span>
       </div>
-      <Switch checked={enabled} onCheckedChange={(v: boolean) => update(v)} />
+      <Switch
+        id='usage-notifications'
+        checked={!!enabled}
+        disabled={isLoading}
+        onCheckedChange={(v: boolean) => {
+          if (v !== enabled) {
+            updateSetting.mutate({ key: 'billingUsageNotificationsEnabled', value: v })
+          }
+        }}
+      />
     </div>
   )
 }

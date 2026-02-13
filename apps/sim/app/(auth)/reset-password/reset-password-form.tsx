@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
-import { inter } from '@/app/fonts/inter'
+import { cn } from '@/lib/core/utils/cn'
+import { inter } from '@/app/_styles/fonts/inter/inter'
+import { BrandedButton } from '@/app/(auth)/components/branded-button'
 
 interface RequestResetFormProps {
   email: string
@@ -27,35 +27,6 @@ export function RequestResetForm({
   statusMessage,
   className,
 }: RequestResetFormProps) {
-  const [buttonClass, setButtonClass] = useState('auth-button-gradient')
-
-  useEffect(() => {
-    const checkCustomBrand = () => {
-      const computedStyle = getComputedStyle(document.documentElement)
-      const brandAccent = computedStyle.getPropertyValue('--brand-accent-hex').trim()
-
-      if (brandAccent && brandAccent !== '#6f3dfa') {
-        setButtonClass('auth-button-custom')
-      } else {
-        setButtonClass('auth-button-gradient')
-      }
-    }
-
-    checkCustomBrand()
-
-    window.addEventListener('resize', checkCustomBrand)
-    const observer = new MutationObserver(checkCustomBrand)
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    })
-
-    return () => {
-      window.removeEventListener('resize', checkCustomBrand)
-      observer.disconnect()
-    }
-  }, [])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     onSubmit(email)
@@ -93,13 +64,14 @@ export function RequestResetForm({
         )}
       </div>
 
-      <Button
+      <BrandedButton
         type='submit'
         disabled={isSubmitting}
-        className={`${buttonClass} flex w-full items-center justify-center gap-2 rounded-[10px] border font-medium text-[15px] text-white transition-all duration-200`}
+        loading={isSubmitting}
+        loadingText='Sending'
       >
-        {isSubmitting ? 'Sending...' : 'Send Reset Link'}
-      </Button>
+        Send Reset Link
+      </BrandedButton>
     </form>
   )
 }
@@ -126,40 +98,37 @@ export function SetNewPasswordForm({
   const [validationMessage, setValidationMessage] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [buttonClass, setButtonClass] = useState('auth-button-gradient')
-
-  useEffect(() => {
-    const checkCustomBrand = () => {
-      const computedStyle = getComputedStyle(document.documentElement)
-      const brandAccent = computedStyle.getPropertyValue('--brand-accent-hex').trim()
-
-      if (brandAccent && brandAccent !== '#6f3dfa') {
-        setButtonClass('auth-button-custom')
-      } else {
-        setButtonClass('auth-button-gradient')
-      }
-    }
-
-    checkCustomBrand()
-
-    window.addEventListener('resize', checkCustomBrand)
-    const observer = new MutationObserver(checkCustomBrand)
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    })
-
-    return () => {
-      window.removeEventListener('resize', checkCustomBrand)
-      observer.disconnect()
-    }
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (password.length < 8) {
       setValidationMessage('Password must be at least 8 characters long')
+      return
+    }
+
+    if (password.length > 100) {
+      setValidationMessage('Password must not exceed 100 characters')
+      return
+    }
+
+    if (!/[A-Z]/.test(password)) {
+      setValidationMessage('Password must contain at least one uppercase letter')
+      return
+    }
+
+    if (!/[a-z]/.test(password)) {
+      setValidationMessage('Password must contain at least one lowercase letter')
+      return
+    }
+
+    if (!/[0-9]/.test(password)) {
+      setValidationMessage('Password must contain at least one number')
+      return
+    }
+
+    if (!/[^A-Za-z0-9]/.test(password)) {
+      setValidationMessage('Password must contain at least one special character')
       return
     }
 
@@ -258,13 +227,14 @@ export function SetNewPasswordForm({
         )}
       </div>
 
-      <Button
-        disabled={isSubmitting || !token}
+      <BrandedButton
         type='submit'
-        className={`${buttonClass} flex w-full items-center justify-center gap-2 rounded-[10px] border font-medium text-[15px] text-white transition-all duration-200`}
+        disabled={isSubmitting || !token}
+        loading={isSubmitting}
+        loadingText='Resetting'
       >
-        {isSubmitting ? 'Resetting...' : 'Reset Password'}
-      </Button>
+        Reset Password
+      </BrandedButton>
     </form>
   )
 }

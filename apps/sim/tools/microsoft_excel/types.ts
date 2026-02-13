@@ -48,6 +48,18 @@ export interface MicrosoftExcelTableAddResponse extends ToolResponse {
   }
 }
 
+export interface MicrosoftExcelWorksheetAddResponse extends ToolResponse {
+  output: {
+    worksheet: {
+      id: string
+      name: string
+      position: number
+      visibility: string
+    }
+    metadata: MicrosoftExcelMetadata
+  }
+}
+
 export interface MicrosoftExcelToolParams {
   accessToken: string
   spreadsheetId: string
@@ -68,7 +80,53 @@ export interface MicrosoftExcelTableToolParams {
   rowIndex?: number
 }
 
+export interface MicrosoftExcelWorksheetToolParams {
+  accessToken: string
+  spreadsheetId: string
+  worksheetName: string
+}
+
 export type MicrosoftExcelResponse =
   | MicrosoftExcelReadResponse
   | MicrosoftExcelWriteResponse
   | MicrosoftExcelTableAddResponse
+  | MicrosoftExcelWorksheetAddResponse
+
+// V2 Types - with separate sheetName param
+export interface MicrosoftExcelV2ToolParams {
+  accessToken: string
+  spreadsheetId: string
+  sheetName: string
+  cellRange?: string
+  values?: ExcelCellValue[][]
+  valueInputOption?: 'RAW' | 'USER_ENTERED'
+  includeValuesInResponse?: boolean
+  majorDimension?: 'ROWS' | 'COLUMNS'
+}
+
+export interface MicrosoftExcelV2ReadResponse extends ToolResponse {
+  output: {
+    sheetName: string
+    range: string
+    values: ExcelCellValue[][]
+    metadata: {
+      spreadsheetId: string
+      spreadsheetUrl: string
+    }
+  }
+}
+
+export interface MicrosoftExcelV2WriteResponse extends ToolResponse {
+  output: {
+    updatedRange: string | null
+    updatedRows: number
+    updatedColumns: number
+    updatedCells: number
+    metadata: {
+      spreadsheetId: string
+      spreadsheetUrl: string
+    }
+  }
+}
+
+export type MicrosoftExcelV2Response = MicrosoftExcelV2ReadResponse | MicrosoftExcelV2WriteResponse

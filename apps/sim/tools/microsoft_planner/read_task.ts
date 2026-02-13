@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type {
   MicrosoftPlannerReadResponse,
   MicrosoftPlannerToolParams,
@@ -13,11 +13,11 @@ export const readTaskTool: ToolConfig<MicrosoftPlannerToolParams, MicrosoftPlann
   description:
     'Read tasks from Microsoft Planner - get all user tasks or all tasks from a specific plan',
   version: '1.0',
+  errorExtractor: 'nested-error-object',
 
   oauth: {
     required: true,
     provider: 'microsoft-planner',
-    additionalScopes: [],
   },
 
   params: {
@@ -30,14 +30,15 @@ export const readTaskTool: ToolConfig<MicrosoftPlannerToolParams, MicrosoftPlann
     planId: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'The ID of the plan to get tasks from (if not provided, gets all user tasks)',
+      visibility: 'user-or-llm',
+      description:
+        'The ID of the plan to get tasks from, if not provided gets all user tasks (e.g., "xqQg5FS2LkCe54tAMV_v2ZgADW2J")',
     },
     taskId: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'The ID of the task to get',
+      visibility: 'user-or-llm',
+      description: 'The ID of the task to get (e.g., "pbT5K2OVkkO1M7r5bfsJ6JgAGD5m")',
     },
   },
 
@@ -47,14 +48,31 @@ export const readTaskTool: ToolConfig<MicrosoftPlannerToolParams, MicrosoftPlann
 
       // If taskId is provided, get specific task
       if (params.taskId) {
-        finalUrl = `https://graph.microsoft.com/v1.0/planner/tasks/${params.taskId}`
+        // Validate and clean task ID
+        const cleanTaskId = params.taskId.trim()
+        if (!cleanTaskId) {
+          throw new Error('Task ID cannot be empty')
+        }
+
+        // Log the task ID for debugging
+        logger.info('Fetching task with ID:', cleanTaskId)
+        logger.info('Task ID length:', cleanTaskId.length)
+        logger.info('Task ID has special chars:', /[^a-zA-Z0-9_-]/.test(cleanTaskId))
+
+        finalUrl = `https://graph.microsoft.com/v1.0/planner/tasks/${cleanTaskId}`
       }
       // Else if planId is provided, get tasks from plan
       else if (params.planId) {
-        finalUrl = `https://graph.microsoft.com/v1.0/planner/plans/${params.planId}/tasks`
+        const cleanPlanId = params.planId.trim()
+        if (!cleanPlanId) {
+          throw new Error('Plan ID cannot be empty')
+        }
+        logger.info('Fetching tasks for plan:', cleanPlanId)
+        finalUrl = `https://graph.microsoft.com/v1.0/planner/plans/${cleanPlanId}/tasks`
       }
       // Else get all user tasks
       else {
+        logger.info('Fetching all user tasks')
         finalUrl = 'https://graph.microsoft.com/v1.0/me/planner/tasks'
       }
 
@@ -68,8 +86,11 @@ export const readTaskTool: ToolConfig<MicrosoftPlannerToolParams, MicrosoftPlann
       }
 
       logger.info('Access token present:', !!params.accessToken)
+      logger.info('Access token length:', params.accessToken.length)
+
       return {
         Authorization: `Bearer ${params.accessToken}`,
+        'Content-Type': 'application/json',
       }
     },
   },
@@ -78,46 +99,73 @@ export const readTaskTool: ToolConfig<MicrosoftPlannerToolParams, MicrosoftPlann
     const data = await response.json()
     logger.info('Raw response data:', data)
 
-    // Handle single task vs multiple tasks response format
-    // Check if data is a single task object or has a 'value' property for multiple tasks
     const rawTasks = data.value ? data.value : Array.isArray(data) ? data : [data]
 
-    // Filter tasks to only include useful fields
-    const tasks = rawTasks.map((task: any) => ({
-      id: task.id,
-      title: task.title,
-      planId: task.planId,
-      bucketId: task.bucketId,
-      percentComplete: task.percentComplete,
-      priority: task.priority,
-      dueDateTime: task.dueDateTime,
-      createdDateTime: task.createdDateTime,
-      completedDateTime: task.completedDateTime,
-      hasDescription: task.hasDescription,
-      assignments: task.assignments ? Object.keys(task.assignments) : [],
-    }))
+    const tasks = rawTasks.map((task: any) => {
+      let etagValue = task['@odata.etag'] ?? null
+      logger.info('ETag value extracted (raw):', {
+        raw: etagValue,
+        type: typeof etagValue,
+        length: etagValue?.length,
+      })
+
+      if (etagValue && typeof etagValue === 'string') {
+        if (etagValue.includes('\\"')) {
+          etagValue = etagValue.replace(/\\"/g, '"')
+          logger.info('Unescaped etag quotes:', { cleaned: etagValue })
+        }
+      }
+
+      return {
+        id: task.id,
+        title: task.title,
+        planId: task.planId,
+        bucketId: task.bucketId ?? null,
+        percentComplete: task.percentComplete,
+        priority: task.priority,
+        dueDateTime: task.dueDateTime ?? null,
+        createdDateTime: task.createdDateTime,
+        completedDateTime: task.completedDateTime ?? null,
+        hasDescription: task.hasDescription,
+        assignments: task.assignments ? Object.keys(task.assignments) : [],
+        etag: etagValue,
+      }
+    })
 
     const result: MicrosoftPlannerReadResponse = {
       success: true,
       output: {
         tasks,
         metadata: {
-          planId: tasks.length > 0 ? tasks[0].planId : '',
-          userId: data.value ? undefined : 'me',
+          planId: tasks.length > 0 ? tasks[0].planId : null,
+          userId: data.value ? null : 'me',
           planUrl:
             tasks.length > 0
               ? `https://graph.microsoft.com/v1.0/planner/plans/${tasks[0].planId}`
-              : undefined,
+              : null,
         },
       },
     }
 
+    logger.info('Successfully transformed response with', tasks.length, 'tasks')
     return result
   },
 
   outputs: {
     success: { type: 'boolean', description: 'Whether tasks were retrieved successfully' },
     tasks: { type: 'array', description: 'Array of task objects with filtered properties' },
-    metadata: { type: 'object', description: 'Metadata including planId, userId, and planUrl' },
+    metadata: {
+      type: 'object',
+      description: 'Metadata including planId, userId, and planUrl',
+      properties: {
+        planId: { type: 'string', description: 'Plan ID', optional: true },
+        userId: { type: 'string', description: 'User ID', optional: true },
+        planUrl: {
+          type: 'string',
+          description: 'Microsoft Graph API URL for the plan',
+          optional: true,
+        },
+      },
+    },
   },
 }

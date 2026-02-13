@@ -8,26 +8,6 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="knowledge"
   color="#00B0B0"
-  icon={true}
-  iconSvg={`<svg className="block-icon"
-      
-      xmlns='http://www.w3.org/2000/svg'
-      
-      
-      viewBox='0 0 24 24'
-      fill='none'
-      stroke='currentColor'
-      strokeWidth='1.5'
-      strokeLinecap='round'
-      strokeLinejoin='round'
-    >
-      <path d='M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14' />
-      <path d='m7.5 4.27 9 5.15' />
-      <polyline points='3.29 7 12 12 20.71 7' />
-      <line x1='12' x2='12' y1='22' y2='12' />
-      <circle cx='18.5' cy='15.5' r='2.5' />
-      <path d='M20.27 17.27 22 19' />
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
@@ -48,7 +28,7 @@ Dans Sim, le bloc Base de connaissances permet à vos agents d'effectuer des rec
 
 ## Instructions d'utilisation
 
-Effectuez une recherche vectorielle sémantique dans les bases de connaissances, téléchargez des fragments individuels dans des documents existants ou créez de nouveaux documents à partir de contenu textuel. Utilise des embeddings IA avancés pour comprendre le sens et le contexte des opérations de recherche.
+Intégrer les connaissances dans le flux de travail. Peut rechercher, télécharger des fragments et créer des documents.
 
 ## Outils
 
@@ -63,7 +43,11 @@ Rechercher du contenu similaire dans une base de connaissances en utilisant la s
 | `knowledgeBaseId` | chaîne | Oui | ID de la base de connaissances dans laquelle effectuer la recherche |
 | `query` | chaîne | Non | Texte de la requête de recherche \(facultatif lors de l'utilisation de filtres par tags\) |
 | `topK` | nombre | Non | Nombre de résultats les plus similaires à retourner \(1-100\) |
-| `tagFilters` | quelconque | Non | Tableau de filtres de tags avec les propriétés tagName et tagValue |
+| `tagFilters` | tableau | Non | Tableau de filtres de tags avec les propriétés tagName et tagValue |
+| `items` | objet | Non | Pas de description |
+| `properties` | chaîne | Non | Pas de description |
+| `tagName` | chaîne | Non | Pas de description |
+| `tagValue` | chaîne | Non | Pas de description |
 
 #### Sortie
 
@@ -96,18 +80,23 @@ Créer un nouveau document dans une base de connaissances
 #### Entrée
 
 | Paramètre | Type | Obligatoire | Description |
-| --------- | ---- | ----------- | ----------- |
+| --------- | ---- | ---------- | ----------- |
 | `knowledgeBaseId` | chaîne | Oui | ID de la base de connaissances contenant le document |
 | `name` | chaîne | Oui | Nom du document |
 | `content` | chaîne | Oui | Contenu du document |
-| `tag1` | chaîne | Non | Valeur de l'étiquette 1 pour le document |
-| `tag2` | chaîne | Non | Valeur de l'étiquette 2 pour le document |
-| `tag3` | chaîne | Non | Valeur de l'étiquette 3 pour le document |
-| `tag4` | chaîne | Non | Valeur de l'étiquette 4 pour le document |
-| `tag5` | chaîne | Non | Valeur de l'étiquette 5 pour le document |
-| `tag6` | chaîne | Non | Valeur de l'étiquette 6 pour le document |
-| `tag7` | chaîne | Non | Valeur de l'étiquette 7 pour le document |
-| `documentTagsData` | tableau | Non | Données d'étiquettes structurées avec noms, types et valeurs |
+| `tag1` | chaîne | Non | Valeur du tag 1 pour le document |
+| `tag2` | chaîne | Non | Valeur du tag 2 pour le document |
+| `tag3` | chaîne | Non | Valeur du tag 3 pour le document |
+| `tag4` | chaîne | Non | Valeur du tag 4 pour le document |
+| `tag5` | chaîne | Non | Valeur du tag 5 pour le document |
+| `tag6` | chaîne | Non | Valeur du tag 6 pour le document |
+| `tag7` | chaîne | Non | Valeur du tag 7 pour le document |
+| `documentTagsData` | tableau | Non | Données de tags structurées avec noms, types et valeurs |
+| `items` | objet | Non | Pas de description |
+| `properties` | chaîne | Non | Pas de description |
+| `tagName` | chaîne | Non | Pas de description |
+| `tagValue` | chaîne | Non | Pas de description |
+| `tagType` | chaîne | Non | Pas de description |
 
 #### Sortie
 

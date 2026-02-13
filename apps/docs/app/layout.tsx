@@ -22,9 +22,15 @@ export const metadata = {
     'drag and drop workflows',
     'AI integrations',
     'workflow canvas',
-    'AI development platform',
+    'AI Agent Workflow Builder',
+    'workflow orchestration',
+    'agent builder',
+    'AI workflow automation',
+    'visual programming',
   ],
   authors: [{ name: 'Sim Team', url: 'https://sim.ai' }],
+  creator: 'Sim',
+  publisher: 'Sim',
   category: 'Developer Tools',
   classification: 'Developer Documentation',
   manifest: '/favicon/site.webmanifest',
@@ -44,19 +50,29 @@ export const metadata = {
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    alternateLocale: ['fr_FR', 'zh_CN'],
+    alternateLocale: ['es_ES', 'fr_FR', 'de_DE', 'ja_JP', 'zh_CN'],
     url: 'https://docs.sim.ai',
     siteName: 'Sim Documentation',
     title: 'Sim Documentation - Visual Workflow Builder for AI Applications',
     description:
       'Comprehensive documentation for Sim - the visual workflow builder for AI applications. Create powerful AI agents, automation workflows, and data processing pipelines.',
+    images: [
+      {
+        url: 'https://docs.sim.ai/api/og?title=Sim%20Documentation',
+        width: 1200,
+        height: 630,
+        alt: 'Sim Documentation',
+      },
+    ],
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'Sim Documentation - Visual Workflow Builder for AI Applications',
     description:
       'Comprehensive documentation for Sim - the visual workflow builder for AI applications.',
-    creator: '@sim_ai',
+    creator: '@simdotai',
+    site: '@simdotai',
+    images: ['https://docs.sim.ai/api/og?title=Sim%20Documentation'],
   },
   robots: {
     index: true,
@@ -72,9 +88,13 @@ export const metadata = {
   alternates: {
     canonical: 'https://docs.sim.ai',
     languages: {
-      en: '/en',
-      fr: '/fr',
-      zh: '/zh',
+      'x-default': 'https://docs.sim.ai',
+      en: 'https://docs.sim.ai',
+      es: 'https://docs.sim.ai/es',
+      fr: 'https://docs.sim.ai/fr',
+      de: 'https://docs.sim.ai/de',
+      ja: 'https://docs.sim.ai/ja',
+      zh: 'https://docs.sim.ai/zh',
     },
   },
 }

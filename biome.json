@@ -24,7 +24,9 @@
       "!**/public/workbox-*.js",
       "!**/public/worker-*.js",
       "!**/public/fallback-*.js",
-      "!**/apps/docs/.source/**"
+      "!**/apps/docs/.source/**",
+      "!**/venv/**",
+      "!**/.venv/**"
     ]
   },
   "formatter": {
@@ -36,30 +38,7 @@
     "lineEnding": "lf",
     "lineWidth": 100,
     "attributePosition": "auto",
-    "bracketSpacing": true,
-    "includes": [
-      "**",
-      "!**/.next",
-      "!**/out",
-      "!**/dist",
-      "!**/build",
-      "!**/node_modules",
-      "!**/.bun",
-      "!**/.cache",
-      "!**/.turbo",
-      "!**/.DS_Store",
-      "!**/*.pem",
-      "!**/bun-debug.log*",
-      "!**/.env*.local",
-      "!**/.env",
-      "!**/.vercel",
-      "!**/coverage",
-      "!**/public/sw.js",
-      "!**/public/workbox-*.js",
-      "!**/public/worker-*.js",
-      "!**/public/fallback-*.js",
-      "!**/apps/docs/.source/**"
-    ]
+    "bracketSpacing": true
   },
   "assist": {
     "actions": {
@@ -139,7 +118,8 @@
       },
       "performance": {
         "noAccumulatingSpread": "off",
-        "noDelete": "error"
+        "noDelete": "error",
+        "noImgElement": "off"
       }
     }
   },

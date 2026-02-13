@@ -1,6 +1,55 @@
+import type { Edge } from 'reactflow'
 import type { BlockState, Loop, Parallel } from '@/stores/workflows/workflow/types'
 
 const DEFAULT_LOOP_ITERATIONS = 5
+
+/**
+ * Check if adding an edge would create a cycle in the graph.
+ * Uses depth-first search to detect if the source node is reachable from the target node.
+ *
+ * @param edges - Current edges in the graph
+ * @param sourceId - Source node ID of the proposed edge
+ * @param targetId - Target node ID of the proposed edge
+ * @returns true if adding this edge would create a cycle
+ */
+export function wouldCreateCycle(edges: Edge[], sourceId: string, targetId: string): boolean {
+  if (sourceId === targetId) {
+    return true
+  }
+
+  const adjacencyList = new Map<string, string[]>()
+  for (const edge of edges) {
+    if (!adjacencyList.has(edge.source)) {
+      adjacencyList.set(edge.source, [])
+    }
+    adjacencyList.get(edge.source)!.push(edge.target)
+  }
+
+  const visited = new Set<string>()
+
+  function canReachSource(currentNode: string): boolean {
+    if (currentNode === sourceId) {
+      return true
+    }
+
+    if (visited.has(currentNode)) {
+      return false
+    }
+
+    visited.add(currentNode)
+
+    const neighbors = adjacencyList.get(currentNode) || []
+    for (const neighbor of neighbors) {
+      if (canReachSource(neighbor)) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  return canReachSource(targetId)
+}
 
 /**
  * Convert UI loop block to executor Loop format
@@ -16,27 +65,21 @@ export function convertLoopBlockToLoop(
   const loopBlock = blocks[loopBlockId]
   if (!loopBlock || loopBlock.type !== 'loop') return undefined
 
-  // Parse collection if it's a string representation of an array/object
-  let forEachItems: any = loopBlock.data?.collection || ''
-  if (typeof forEachItems === 'string' && forEachItems.trim()) {
-    const trimmed = forEachItems.trim()
-    // Try to parse if it looks like JSON
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-      try {
-        forEachItems = JSON.parse(trimmed)
-      } catch {
-        // Keep as string if parsing fails - will be evaluated at runtime
-      }
-    }
-  }
+  const loopType = loopBlock.data?.loopType || 'for'
 
-  return {
+  const loop: Loop = {
     id: loopBlockId,
     nodes: findChildNodes(loopBlockId, blocks),
     iterations: loopBlock.data?.count || DEFAULT_LOOP_ITERATIONS,
-    loopType: loopBlock.data?.loopType || 'for',
-    forEachItems,
+    loopType,
+    enabled: loopBlock.enabled,
   }
+
+  loop.forEachItems = loopBlock.data?.collection || ''
+  loop.whileCondition = loopBlock.data?.whileCondition || ''
+  loop.doWhileCondition = loopBlock.data?.doWhileCondition || ''
+
+  return loop
 }
 
 /**
@@ -53,18 +96,15 @@ export function convertParallelBlockToParallel(
   const parallelBlock = blocks[parallelBlockId]
   if (!parallelBlock || parallelBlock.type !== 'parallel') return undefined
 
-  // Get the parallel type from block data, defaulting to 'count' for consistency
   const parallelType = parallelBlock.data?.parallelType || 'count'
 
-  // Validate parallelType against allowed values
   const validParallelTypes = ['collection', 'count'] as const
   const validatedParallelType = validParallelTypes.includes(parallelType as any)
     ? parallelType
     : 'collection'
 
-  // Only set distribution if it's a collection-based parallel
   const distribution =
-    validatedParallelType === 'collection' ? parallelBlock.data?.collection || '' : ''
+    validatedParallelType === 'collection' ? parallelBlock.data?.collection || '' : undefined
 
   const count = parallelBlock.data?.count || 5
 
@@ -74,6 +114,7 @@ export function convertParallelBlockToParallel(
     distribution,
     count,
     parallelType: validatedParallelType,
+    enabled: parallelBlock.enabled,
   }
 }
 
@@ -126,7 +167,6 @@ export function findAllDescendantNodes(
 export function generateLoopBlocks(blocks: Record<string, BlockState>): Record<string, Loop> {
   const loops: Record<string, Loop> = {}
 
-  // Find all loop nodes
   Object.entries(blocks)
     .filter(([_, block]) => block.type === 'loop')
     .forEach(([id, block]) => {
@@ -150,7 +190,6 @@ export function generateParallelBlocks(
 ): Record<string, Parallel> {
   const parallels: Record<string, Parallel> = {}
 
-  // Find all parallel nodes
   Object.entries(blocks)
     .filter(([_, block]) => block.type === 'parallel')
     .forEach(([id, block]) => {

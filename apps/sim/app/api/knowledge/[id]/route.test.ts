@@ -3,14 +3,14 @@
  *
  * @vitest-environment node
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createMockRequest,
   mockAuth,
   mockConsoleLogger,
   mockDrizzleOrm,
   mockKnowledgeSchemas,
-} from '@/app/api/__test-utils__/utils'
+} from '@sim/testing'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 mockKnowledgeSchemas()
 mockDrizzleOrm()
@@ -234,6 +234,7 @@ describe('Knowledge Base By ID API Route', () => {
         {
           name: validUpdateData.name,
           description: validUpdateData.description,
+          workspaceId: undefined,
           chunkingConfig: undefined,
         },
         expect.any(String)

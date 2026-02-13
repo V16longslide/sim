@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type { SharepointAddListItemResponse, SharepointToolParams } from '@/tools/sharepoint/types'
 import type { ToolConfig } from '@/tools/types'
 
@@ -13,7 +13,6 @@ export const addListItemTool: ToolConfig<SharepointToolParams, SharepointAddList
   oauth: {
     required: true,
     provider: 'sharepoint',
-    additionalScopes: ['openid', 'profile', 'email', 'Sites.ReadWrite.All', 'offline_access'],
   },
 
   params: {
@@ -38,8 +37,9 @@ export const addListItemTool: ToolConfig<SharepointToolParams, SharepointAddList
     listId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the list to add the item to',
+      visibility: 'user-or-llm',
+      description:
+        'The ID of the list to add the item to. Example: b!abc123def456 or a GUID like 12345678-1234-1234-1234-123456789012',
     },
     listItemFields: {
       type: 'object',

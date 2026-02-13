@@ -1,8 +1,11 @@
 import { db } from '@sim/db'
 import { chat } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { eq } from 'drizzle-orm'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import type { NextRequest } from 'next/server'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { generateRequestId } from '@/lib/core/utils/request'
+import { authorizeWorkflowByWorkspacePermission } from '@/lib/workflows/utils'
 import { createErrorResponse, createSuccessResponse } from '@/app/api/workflows/utils'
 
 const logger = createLogger('ChatStatusAPI')
@@ -10,18 +13,42 @@ const logger = createLogger('ChatStatusAPI')
 /**
  * GET endpoint to check if a workflow has an active chat deployment
  */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const requestId = generateRequestId()
 
   try {
+    const auth = await checkSessionOrInternalAuth(request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
+      return createErrorResponse('Unauthorized', 401)
+    }
+
+    const authorization = await authorizeWorkflowByWorkspacePermission({
+      workflowId: id,
+      userId: auth.userId,
+      action: 'read',
+    })
+    if (!authorization.allowed) {
+      return createErrorResponse(
+        authorization.message || 'Access denied',
+        authorization.status || 403
+      )
+    }
+
     logger.debug(`[${requestId}] Checking chat deployment status for workflow: ${id}`)
 
     // Find any active chat deployments for this workflow
     const deploymentResults = await db
       .select({
         id: chat.id,
-        subdomain: chat.subdomain,
+        identifier: chat.identifier,
+        title: chat.title,
+        description: chat.description,
+        customizations: chat.customizations,
+        authType: chat.authType,
+        allowedEmails: chat.allowedEmails,
+        outputConfigs: chat.outputConfigs,
+        password: chat.password,
         isActive: chat.isActive,
       })
       .from(chat)
@@ -33,7 +60,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       deploymentResults.length > 0
         ? {
             id: deploymentResults[0].id,
-            subdomain: deploymentResults[0].subdomain,
+            identifier: deploymentResults[0].identifier,
+            title: deploymentResults[0].title,
+            description: deploymentResults[0].description,
+            customizations: deploymentResults[0].customizations,
+            authType: deploymentResults[0].authType,
+            allowedEmails: deploymentResults[0].allowedEmails,
+            outputConfigs: deploymentResults[0].outputConfigs,
+            hasPassword: Boolean(deploymentResults[0].password),
           }
         : null
 

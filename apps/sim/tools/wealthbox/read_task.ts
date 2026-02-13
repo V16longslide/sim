@@ -17,8 +17,8 @@ export const wealthboxReadTaskTool: ToolConfig<WealthboxReadParams, WealthboxRea
     taskId: {
       type: 'string',
       required: false,
-      description: 'The ID of the task to read',
-      visibility: 'user-only',
+      description: 'The ID of the task to read (e.g., "67890")',
+      visibility: 'user-or-llm',
     },
   },
 
@@ -44,7 +44,7 @@ export const wealthboxReadTaskTool: ToolConfig<WealthboxReadParams, WealthboxRea
     },
   },
 
-  transformResponse: async (response: Response, params?: WealthboxReadParams) => {
+  transformResponse: async (response: Response) => {
     const data = await response.json()
 
     // Format task information into readable content
@@ -84,8 +84,8 @@ export const wealthboxReadTaskTool: ToolConfig<WealthboxReadParams, WealthboxRea
         content,
         task,
         metadata: {
-          operation: 'read_task' as const,
-          taskId: params?.taskId || task.id?.toString() || '',
+          itemId: task.id?.toString() ?? null,
+          taskId: task.id?.toString() ?? null,
           itemType: 'task' as const,
         },
       },
@@ -104,8 +104,8 @@ export const wealthboxReadTaskTool: ToolConfig<WealthboxReadParams, WealthboxRea
           type: 'object',
           description: 'Operation metadata',
           properties: {
-            operation: { type: 'string', description: 'The operation performed' },
-            taskId: { type: 'string', description: 'ID of the task' },
+            itemId: { type: 'string', description: 'ID of the task', optional: true },
+            taskId: { type: 'string', description: 'ID of the task', optional: true },
             itemType: { type: 'string', description: 'Type of item (task)' },
           },
         },

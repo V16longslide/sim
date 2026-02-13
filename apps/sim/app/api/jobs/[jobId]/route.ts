@@ -1,9 +1,8 @@
-import { runs } from '@trigger.dev/sdk'
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
-import { authenticateApiKeyFromHeader, updateApiKeyLastUsed } from '@/lib/api-key/service'
-import { getSession } from '@/lib/auth'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import { checkHybridAuth } from '@/lib/auth/hybrid'
+import { getJobQueue, JOB_STATUS } from '@/lib/core/async-jobs'
+import { generateRequestId } from '@/lib/core/utils/request'
 import { createErrorResponse } from '@/app/api/workflows/utils'
 
 const logger = createLogger('TaskStatusAPI')
@@ -16,84 +15,68 @@ export async function GET(
   const requestId = generateRequestId()
 
   try {
-    logger.debug(`[${requestId}] Getting status for task: ${taskId}`)
+    const authResult = await checkHybridAuth(request, { requireWorkflowId: false })
+    if (!authResult.success || !authResult.userId) {
+      logger.warn(`[${requestId}] Unauthorized task status request`)
+      return createErrorResponse(authResult.error || 'Authentication required', 401)
+    }
 
-    // Try session auth first (for web UI)
-    const session = await getSession()
-    let authenticatedUserId: string | null = session?.user?.id || null
+    const authenticatedUserId = authResult.userId
 
-    if (!authenticatedUserId) {
-      const apiKeyHeader = request.headers.get('x-api-key')
-      if (apiKeyHeader) {
-        const authResult = await authenticateApiKeyFromHeader(apiKeyHeader)
-        if (authResult.success && authResult.userId) {
-          authenticatedUserId = authResult.userId
-          if (authResult.keyId) {
-            await updateApiKeyLastUsed(authResult.keyId).catch((error) => {
-              logger.warn(`[${requestId}] Failed to update API key last used timestamp:`, {
-                keyId: authResult.keyId,
-                error,
-              })
-            })
-          }
-        }
+    const jobQueue = await getJobQueue()
+    const job = await jobQueue.getJob(taskId)
+
+    if (!job) {
+      return createErrorResponse('Task not found', 404)
+    }
+
+    if (job.metadata?.workflowId) {
+      const { verifyWorkflowAccess } = await import('@/socket/middleware/permissions')
+      const accessCheck = await verifyWorkflowAccess(
+        authenticatedUserId,
+        job.metadata.workflowId as string
+      )
+      if (!accessCheck.hasAccess) {
+        logger.warn(`[${requestId}] Access denied to workflow ${job.metadata.workflowId}`)
+        return createErrorResponse('Access denied', 403)
       }
+    } else if (job.metadata?.userId && job.metadata.userId !== authenticatedUserId) {
+      logger.warn(`[${requestId}] Access denied to user ${job.metadata.userId}`)
+      return createErrorResponse('Access denied', 403)
+    } else if (!job.metadata?.userId && !job.metadata?.workflowId) {
+      logger.warn(`[${requestId}] Access denied to job ${taskId}`)
+      return createErrorResponse('Access denied', 403)
     }
 
-    if (!authenticatedUserId) {
-      return createErrorResponse('Authentication required', 401)
-    }
+    const mappedStatus = job.status === JOB_STATUS.PENDING ? 'queued' : job.status
 
-    // Fetch task status from Trigger.dev
-    const run = await runs.retrieve(taskId)
-
-    logger.debug(`[${requestId}] Task ${taskId} status: ${run.status}`)
-
-    // Map Trigger.dev status to our format
-    const statusMap = {
-      QUEUED: 'queued',
-      WAITING_FOR_DEPLOY: 'queued',
-      EXECUTING: 'processing',
-      RESCHEDULED: 'processing',
-      FROZEN: 'processing',
-      COMPLETED: 'completed',
-      CANCELED: 'cancelled',
-      FAILED: 'failed',
-      CRASHED: 'failed',
-      INTERRUPTED: 'failed',
-      SYSTEM_FAILURE: 'failed',
-      EXPIRED: 'failed',
-    } as const
-
-    const mappedStatus = statusMap[run.status as keyof typeof statusMap] || 'unknown'
-
-    // Build response based on status
     const response: any = {
       success: true,
       taskId,
       status: mappedStatus,
       metadata: {
-        startedAt: run.startedAt,
+        startedAt: job.startedAt,
       },
     }
 
-    // Add completion details if finished
-    if (mappedStatus === 'completed') {
-      response.output = run.output // This contains the workflow execution results
-      response.metadata.completedAt = run.finishedAt
-      response.metadata.duration = run.durationMs
+    if (job.status === JOB_STATUS.COMPLETED) {
+      response.output = job.output
+      response.metadata.completedAt = job.completedAt
+      if (job.startedAt && job.completedAt) {
+        response.metadata.duration = job.completedAt.getTime() - job.startedAt.getTime()
+      }
     }
 
-    // Add error details if failed
-    if (mappedStatus === 'failed') {
-      response.error = run.error
-      response.metadata.completedAt = run.finishedAt
-      response.metadata.duration = run.durationMs
+    if (job.status === JOB_STATUS.FAILED) {
+      response.error = job.error
+      response.metadata.completedAt = job.completedAt
+      if (job.startedAt && job.completedAt) {
+        response.metadata.duration = job.completedAt.getTime() - job.startedAt.getTime()
+      }
     }
 
-    // Add progress info if still processing
-    if (mappedStatus === 'processing' || mappedStatus === 'queued') {
-      response.estimatedDuration = 180000 // 3 minutes max from our config
+    if (job.status === JOB_STATUS.PROCESSING || job.status === JOB_STATUS.PENDING) {
+      response.estimatedDuration = 300000
     }
 
     return NextResponse.json(response)
@@ -107,6 +90,3 @@ export async function GET(
     return createErrorResponse('Failed to fetch task status', 500)
   }
 }
-
-// TODO: Implement task cancellation via Trigger.dev API if needed
-// export async function DELETE() { ... }

@@ -1,12 +1,20 @@
 import { db } from '@sim/db'
 import { member, user, userStats } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { and, eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getSession } from '@/lib/auth'
 import { getUserUsageData } from '@/lib/billing/core/usage'
-import { createLogger } from '@/lib/logs/console/logger'
+import { removeUserFromOrganization } from '@/lib/billing/organizations/membership'
 
 const logger = createLogger('OrganizationMemberAPI')
+
+const updateMemberSchema = z.object({
+  role: z.enum(['owner', 'admin', 'member'], {
+    errorMap: () => ({ message: 'Invalid role' }),
+  }),
+})
 
 /**
  * GET /api/organizations/[id]/members/[memberId]
@@ -27,7 +35,6 @@ export async function GET(
     const url = new URL(request.url)
     const includeUsage = url.searchParams.get('include') === 'usage'
 
-    // Verify user has access to this organization
     const userMember = await db
       .select()
       .from(member)
@@ -44,7 +51,6 @@ export async function GET(
     const userRole = userMember[0].role
     const hasAdminAccess = ['owner', 'admin'].includes(userRole)
 
-    // Get target member details
     const memberQuery = db
       .select({
         id: member.id,
@@ -66,7 +72,6 @@ export async function GET(
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
 
-    // Check if user can view this member's details
     const canViewDetails = hasAdminAccess || session.user.id === memberId
 
     if (!canViewDetails) {
@@ -75,7 +80,6 @@ export async function GET(
 
     let memberData = memberEntry[0]
 
-    // Include usage data if requested and user has permission
     if (includeUsage && hasAdminAccess) {
       const usageData = await db
         .select({
@@ -140,14 +144,16 @@ export async function PUT(
     }
 
     const { id: organizationId, memberId } = await params
-    const { role } = await request.json()
+    const body = await request.json()
 
-    // Validate input
-    if (!role || !['admin', 'member'].includes(role)) {
-      return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+    const validation = updateMemberSchema.safeParse(body)
+    if (!validation.success) {
+      const firstError = validation.error.errors[0]
+      return NextResponse.json({ error: firstError.message }, { status: 400 })
     }
 
-    // Verify user has admin access
+    const { role } = validation.data
+
     const userMember = await db
       .select()
       .from(member)
@@ -165,7 +171,6 @@ export async function PUT(
       return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 })
     }
 
-    // Check if target member exists
     const targetMember = await db
       .select()
       .from(member)
@@ -176,12 +181,10 @@ export async function PUT(
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
 
-    // Prevent changing owner role
     if (targetMember[0].role === 'owner') {
       return NextResponse.json({ error: 'Cannot change owner role' }, { status: 400 })
     }
 
-    // Prevent non-owners from promoting to admin
     if (role === 'admin' && userMember[0].role !== 'owner') {
       return NextResponse.json(
         { error: 'Only owners can promote members to admin' },
@@ -189,12 +192,10 @@ export async function PUT(
       )
     }
 
-    // Prevent admins from changing other admins' roles - only owners can modify admin roles
     if (targetMember[0].role === 'admin' && userMember[0].role !== 'owner') {
       return NextResponse.json({ error: 'Only owners can change admin roles' }, { status: 403 })
     }
 
-    // Update member role
     const updatedMember = await db
       .update(member)
       .set({ role })
@@ -248,9 +249,8 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { id: organizationId, memberId } = await params
+    const { id: organizationId, memberId: targetUserId } = await params
 
-    // Verify user has admin access
     const userMember = await db
       .select()
       .from(member)
@@ -265,53 +265,54 @@ export async function DELETE(
     }
 
     const canRemoveMembers =
-      ['owner', 'admin'].includes(userMember[0].role) || session.user.id === memberId
+      ['owner', 'admin'].includes(userMember[0].role) || session.user.id === targetUserId
 
     if (!canRemoveMembers) {
       return NextResponse.json({ error: 'Forbidden - Insufficient permissions' }, { status: 403 })
     }
 
-    // Check if target member exists
     const targetMember = await db
-      .select()
+      .select({ id: member.id, role: member.role })
       .from(member)
-      .where(and(eq(member.organizationId, organizationId), eq(member.userId, memberId)))
+      .where(and(eq(member.organizationId, organizationId), eq(member.userId, targetUserId)))
       .limit(1)
 
     if (targetMember.length === 0) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
 
-    // Prevent removing the owner
-    if (targetMember[0].role === 'owner') {
-      return NextResponse.json({ error: 'Cannot remove organization owner' }, { status: 400 })
-    }
+    const result = await removeUserFromOrganization({
+      userId: targetUserId,
+      organizationId,
+      memberId: targetMember[0].id,
+    })
 
-    // Remove member
-    const removedMember = await db
-      .delete(member)
-      .where(and(eq(member.organizationId, organizationId), eq(member.userId, memberId)))
-      .returning()
-
-    if (removedMember.length === 0) {
-      return NextResponse.json({ error: 'Failed to remove member' }, { status: 500 })
+    if (!result.success) {
+      if (result.error === 'Cannot remove organization owner') {
+        return NextResponse.json({ error: result.error }, { status: 400 })
+      }
+      if (result.error === 'Member not found') {
+        return NextResponse.json({ error: result.error }, { status: 404 })
+      }
+      return NextResponse.json({ error: result.error }, { status: 500 })
     }
 
     logger.info('Organization member removed', {
       organizationId,
-      removedMemberId: memberId,
+      removedMemberId: targetUserId,
       removedBy: session.user.id,
-      wasSelfRemoval: session.user.id === memberId,
+      wasSelfRemoval: session.user.id === targetUserId,
+      billingActions: result.billingActions,
     })
 
     return NextResponse.json({
       success: true,
       message:
-        session.user.id === memberId
+        session.user.id === targetUserId
           ? 'You have left the organization'
           : 'Member removed successfully',
       data: {
-        removedMemberId: memberId,
+        removedMemberId: targetUserId,
         removedBy: session.user.id,
         removedAt: new Date().toISOString(),
       },

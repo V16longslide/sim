@@ -8,6 +8,10 @@ export const MemoryBlock: BlockConfig = {
   longDescription:
     'Integrate Memory into the workflow. Can add, get a memory, get all memories, and delete memories.',
   bgColor: '#F64F9E',
+  bestPractices: `
+  - Do not use this block unless the user explicitly asks for it.
+  - Used in conjunction with agent blocks to inject artificial memory into the conversation. For natural conversations, use the agent block memories modes directly instead.
+  `,
   icon: BrainIcon,
   category: 'blocks',
   docsLink: 'https://docs.sim.ai/tools/memory',
@@ -16,7 +20,6 @@ export const MemoryBlock: BlockConfig = {
       id: 'operation',
       title: 'Operation',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'Add Memory', id: 'add' },
         { label: 'Get All Memories', id: 'getAll' },
@@ -28,10 +31,9 @@ export const MemoryBlock: BlockConfig = {
     },
     {
       id: 'id',
-      title: 'ID',
+      title: 'Conversation ID',
       type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter memory identifier',
+      placeholder: 'Enter conversation ID (e.g., user-123)',
       condition: {
         field: 'operation',
         value: 'add',
@@ -40,10 +42,9 @@ export const MemoryBlock: BlockConfig = {
     },
     {
       id: 'id',
-      title: 'ID',
+      title: 'Conversation ID',
       type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter memory identifier to retrieve',
+      placeholder: 'Enter conversation ID (e.g., user-123)',
       condition: {
         field: 'operation',
         value: 'get',
@@ -52,10 +53,9 @@ export const MemoryBlock: BlockConfig = {
     },
     {
       id: 'id',
-      title: 'ID',
+      title: 'Conversation ID',
       type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter memory identifier to delete',
+      placeholder: 'Enter conversation ID (e.g., user-123)',
       condition: {
         field: 'operation',
         value: 'delete',
@@ -66,7 +66,6 @@ export const MemoryBlock: BlockConfig = {
       id: 'role',
       title: 'Role',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'User', id: 'user' },
         { label: 'Assistant', id: 'assistant' },
@@ -83,7 +82,6 @@ export const MemoryBlock: BlockConfig = {
       id: 'content',
       title: 'Content',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter message content',
       condition: {
         field: 'operation',
@@ -111,77 +109,63 @@ export const MemoryBlock: BlockConfig = {
         }
       },
       params: (params: Record<string, any>) => {
-        // Create detailed error information for any missing required fields
         const errors: string[] = []
 
         if (!params.operation) {
           errors.push('Operation is required')
         }
 
-        if (
-          params.operation === 'add' ||
-          params.operation === 'get' ||
-          params.operation === 'delete'
-        ) {
-          if (!params.id) {
-            errors.push(`Memory ID is required for ${params.operation} operation`)
-          }
-        }
+        const conversationId = params.id || params.conversationId
 
         if (params.operation === 'add') {
-          if (!params.role) {
-            errors.push('Role is required for agent memory')
-          }
-          if (!params.content) {
-            errors.push('Content is required for agent memory')
+          if (!conversationId) {
+            errors.push('Conversation ID is required for add operation')
           }
         }
 
-        // Throw error if any required fields are missing
+        if (params.operation === 'get' || params.operation === 'delete') {
+          if (!conversationId) {
+            errors.push(`Conversation ID is required for ${params.operation} operation`)
+          }
+        }
+
         if (errors.length > 0) {
           throw new Error(`Memory Block Error: ${errors.join(', ')}`)
         }
 
-        // Base result object
         const baseResult: Record<string, any> = {}
 
-        // For add operation
         if (params.operation === 'add') {
-          const result: Record<string, any> = {
+          return {
             ...baseResult,
-            id: params.id,
-            type: 'agent', // Always agent type
+            conversationId: conversationId,
             role: params.role,
             content: params.content,
           }
-
-          return result
         }
 
-        // For get operation
         if (params.operation === 'get') {
           return {
             ...baseResult,
-            id: params.id,
+            conversationId: conversationId,
           }
         }
 
-        // For delete operation
         if (params.operation === 'delete') {
           return {
             ...baseResult,
-            id: params.id,
+            conversationId: conversationId,
           }
         }
 
-        // For getAll operation
         return baseResult
       },
     },
   },
   inputs: {
     operation: { type: 'string', description: 'Operation to perform' },
-    id: { type: 'string', description: 'Memory identifier' },
+    id: { type: 'string', description: 'Memory identifier (conversation ID)' },
+    conversationId: { type: 'string', description: 'Conversation identifier' },
     role: { type: 'string', description: 'Agent role' },
     content: { type: 'string', description: 'Memory content' },
   },

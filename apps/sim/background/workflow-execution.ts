@@ -1,19 +1,17 @@
-import { db } from '@sim/db'
-import { userStats, workflow as workflowTable } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { task } from '@trigger.dev/sdk'
-import { eq, sql } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
-import { checkServerSideUsageLimits } from '@/lib/billing'
-import { getPersonalAndWorkspaceEnv } from '@/lib/environment/utils'
-import { createLogger } from '@/lib/logs/console/logger'
+import { createTimeoutAbortController, getTimeoutErrorMessage } from '@/lib/core/execution-limits'
+import { preprocessExecution } from '@/lib/execution/preprocessing'
 import { LoggingSession } from '@/lib/logs/execution/logging-session'
 import { buildTraceSpans } from '@/lib/logs/execution/trace-spans/trace-spans'
-import { decryptSecret } from '@/lib/utils'
-import { loadDeployedWorkflowState } from '@/lib/workflows/db-helpers'
-import { updateWorkflowRunCounts } from '@/lib/workflows/utils'
-import { Executor } from '@/executor'
-import { Serializer } from '@/serializer'
-import { mergeSubblockState } from '@/stores/workflows/server-utils'
+import { executeWorkflowCore } from '@/lib/workflows/executor/execution-core'
+import { PauseResumeManager } from '@/lib/workflows/executor/human-in-the-loop-manager'
+import { getWorkflowById } from '@/lib/workflows/utils'
+import { ExecutionSnapshot } from '@/executor/execution/snapshot'
+import type { ExecutionMetadata } from '@/executor/execution/types'
+import { hasExecutionResult } from '@/executor/utils/errors'
+import type { CoreTriggerType } from '@/stores/logs/filters/types'
 
 const logger = createLogger('TriggerWorkflowExecution')
 
@@ -21,193 +19,184 @@ export type WorkflowExecutionPayload = {
   workflowId: string
   userId: string
   input?: any
-  triggerType?: 'api' | 'webhook' | 'schedule' | 'manual' | 'chat'
+  triggerType?: CoreTriggerType
+  executionId?: string
   metadata?: Record<string, any>
 }
 
+/**
+ * Background workflow execution job
+ * @see preprocessExecution For detailed information on preprocessing checks
+ * @see executeWorkflowCore For the core workflow execution logic
+ */
 export async function executeWorkflowJob(payload: WorkflowExecutionPayload) {
   const workflowId = payload.workflowId
-  const executionId = uuidv4()
+  const executionId = payload.executionId || uuidv4()
   const requestId = executionId.slice(0, 8)
 
-  logger.info(`[${requestId}] Starting workflow execution: ${workflowId}`, {
+  logger.info(`[${requestId}] Starting workflow execution job: ${workflowId}`, {
     userId: payload.userId,
     triggerType: payload.triggerType,
     executionId,
   })
 
-  // Initialize logging session
   const triggerType = payload.triggerType || 'api'
   const loggingSession = new LoggingSession(workflowId, executionId, triggerType, requestId)
 
   try {
-    const usageCheck = await checkServerSideUsageLimits(payload.userId)
-    if (usageCheck.isExceeded) {
-      logger.warn(
-        `[${requestId}] User ${payload.userId} has exceeded usage limits. Skipping workflow execution.`,
-        {
-          currentUsage: usageCheck.currentUsage,
-          limit: usageCheck.limit,
-          workflowId: payload.workflowId,
-        }
-      )
-      throw new Error(
-        usageCheck.message ||
-          'Usage limit exceeded. Please upgrade your plan to continue using workflows.'
-      )
+    const preprocessResult = await preprocessExecution({
+      workflowId: payload.workflowId,
+      userId: payload.userId,
+      triggerType: triggerType,
+      executionId: executionId,
+      requestId: requestId,
+      checkRateLimit: true,
+      checkDeployment: true,
+      loggingSession: loggingSession,
+    })
+
+    if (!preprocessResult.success) {
+      logger.error(`[${requestId}] Preprocessing failed: ${preprocessResult.error?.message}`, {
+        workflowId,
+        statusCode: preprocessResult.error?.statusCode,
+      })
+
+      throw new Error(preprocessResult.error?.message || 'Preprocessing failed')
     }
 
-    // Load workflow data from deployed state (this task is only used for API executions right now)
-    const workflowData = await loadDeployedWorkflowState(workflowId)
+    const actorUserId = preprocessResult.actorUserId!
+    const workspaceId = preprocessResult.workflowRecord?.workspaceId
+    if (!workspaceId) {
+      throw new Error(`Workflow ${workflowId} has no associated workspace`)
+    }
 
-    const { blocks, edges, loops, parallels } = workflowData
+    logger.info(`[${requestId}] Preprocessing passed. Using actor: ${actorUserId}`)
 
-    // Merge subblock states (server-safe version doesn't need workflowId)
-    const mergedStates = mergeSubblockState(blocks, {})
-
-    // Process block states for execution
-    const processedBlockStates = Object.entries(mergedStates).reduce(
-      (acc, [blockId, blockState]) => {
-        acc[blockId] = Object.entries(blockState.subBlocks).reduce(
-          (subAcc, [key, subBlock]) => {
-            subAcc[key] = subBlock.value
-            return subAcc
-          },
-          {} as Record<string, any>
-        )
-        return acc
-      },
-      {} as Record<string, Record<string, any>>
-    )
-
-    // Get environment variables with workspace precedence
-    const wfRows = await db
-      .select({ workspaceId: workflowTable.workspaceId })
-      .from(workflowTable)
-      .where(eq(workflowTable.id, workflowId))
-      .limit(1)
-    const workspaceId = wfRows[0]?.workspaceId || undefined
-
-    const { personalEncrypted, workspaceEncrypted } = await getPersonalAndWorkspaceEnv(
-      payload.userId,
-      workspaceId
-    )
-    const mergedEncrypted = { ...personalEncrypted, ...workspaceEncrypted }
-    const decryptionPromises = Object.entries(mergedEncrypted).map(async ([key, encrypted]) => {
-      const { decrypted } = await decryptSecret(encrypted)
-      return [key, decrypted] as const
-    })
-    const decryptedPairs = await Promise.all(decryptionPromises)
-    const decryptedEnvVars: Record<string, string> = Object.fromEntries(decryptedPairs)
-
-    // Start logging session
     await loggingSession.safeStart({
-      userId: payload.userId,
-      workspaceId: workspaceId || '',
-      variables: decryptedEnvVars,
+      userId: actorUserId,
+      workspaceId,
+      variables: {},
     })
 
-    // Create serialized workflow
-    const serializer = new Serializer()
-    const serializedWorkflow = serializer.serializeWorkflow(
-      mergedStates,
-      edges,
-      loops || {},
-      parallels || {},
-      true // Enable validation during execution
+    const workflow = await getWorkflowById(workflowId)
+    if (!workflow) {
+      throw new Error(`Workflow ${workflowId} not found after preprocessing`)
+    }
+
+    const metadata: ExecutionMetadata = {
+      requestId,
+      executionId,
+      workflowId,
+      workspaceId,
+      userId: actorUserId,
+      sessionUserId: undefined,
+      workflowUserId: workflow.userId,
+      triggerType: payload.triggerType || 'api',
+      useDraftState: false,
+      startTime: new Date().toISOString(),
+      isClientSession: false,
+    }
+
+    const snapshot = new ExecutionSnapshot(
+      metadata,
+      workflow,
+      payload.input,
+      workflow.variables || {},
+      []
     )
 
-    // Create executor and execute
-    const executor = new Executor({
-      workflow: serializedWorkflow,
-      currentBlockStates: processedBlockStates,
-      envVarValues: decryptedEnvVars,
-      workflowInput: payload.input || {},
-      workflowVariables: {},
-      contextExtensions: {
-        executionId,
-        workspaceId: workspaceId || '',
-      },
-    })
+    const timeoutController = createTimeoutAbortController(preprocessResult.executionTimeout?.async)
 
-    // Set up logging on the executor
-    loggingSession.setupExecutor(executor)
+    let result
+    try {
+      result = await executeWorkflowCore({
+        snapshot,
+        callbacks: {},
+        loggingSession,
+        includeFileBase64: true,
+        base64MaxBytes: undefined,
+        abortSignal: timeoutController.signal,
+      })
+    } finally {
+      timeoutController.cleanup()
+    }
 
-    const result = await executor.execute(workflowId)
-
-    // Handle streaming vs regular result
-    const executionResult = 'stream' in result && 'execution' in result ? result.execution : result
+    if (
+      result.status === 'cancelled' &&
+      timeoutController.isTimedOut() &&
+      timeoutController.timeoutMs
+    ) {
+      const timeoutErrorMessage = getTimeoutErrorMessage(null, timeoutController.timeoutMs)
+      logger.info(`[${requestId}] Workflow execution timed out`, {
+        timeoutMs: timeoutController.timeoutMs,
+      })
+      await loggingSession.markAsFailed(timeoutErrorMessage)
+    } else if (result.status === 'paused') {
+      if (!result.snapshotSeed) {
+        logger.error(`[${requestId}] Missing snapshot seed for paused execution`, {
+          executionId,
+        })
+        await loggingSession.markAsFailed('Missing snapshot seed for paused execution')
+      } else {
+        try {
+          await PauseResumeManager.persistPauseResult({
+            workflowId,
+            executionId,
+            pausePoints: result.pausePoints || [],
+            snapshotSeed: result.snapshotSeed,
+            executorUserId: result.metadata?.userId,
+          })
+        } catch (pauseError) {
+          logger.error(`[${requestId}] Failed to persist pause result`, {
+            executionId,
+            error: pauseError instanceof Error ? pauseError.message : String(pauseError),
+          })
+          await loggingSession.markAsFailed(
+            `Failed to persist pause state: ${pauseError instanceof Error ? pauseError.message : String(pauseError)}`
+          )
+        }
+      }
+    } else {
+      await PauseResumeManager.processQueuedResumes(executionId)
+    }
 
     logger.info(`[${requestId}] Workflow execution completed: ${workflowId}`, {
-      success: executionResult.success,
-      executionTime: executionResult.metadata?.duration,
+      success: result.success,
+      executionTime: result.metadata?.duration,
       executionId,
-    })
-
-    // Update workflow run counts on success
-    if (executionResult.success) {
-      await updateWorkflowRunCounts(workflowId)
-
-      // Track execution in user stats
-      const statsUpdate =
-        triggerType === 'api'
-          ? { totalApiCalls: sql`total_api_calls + 1` }
-          : triggerType === 'webhook'
-            ? { totalWebhookTriggers: sql`total_webhook_triggers + 1` }
-            : triggerType === 'schedule'
-              ? { totalScheduledExecutions: sql`total_scheduled_executions + 1` }
-              : { totalManualExecutions: sql`total_manual_executions + 1` }
-
-      await db
-        .update(userStats)
-        .set({
-          ...statsUpdate,
-          lastActive: sql`now()`,
-        })
-        .where(eq(userStats.userId, payload.userId))
-    }
-
-    // Build trace spans and complete logging session (for both success and failure)
-    const { traceSpans, totalDuration } = buildTraceSpans(executionResult)
-
-    await loggingSession.safeComplete({
-      endedAt: new Date().toISOString(),
-      totalDurationMs: totalDuration || 0,
-      finalOutput: executionResult.output || {},
-      traceSpans: traceSpans as any,
     })
 
     return {
-      success: executionResult.success,
+      success: result.success,
       workflowId: payload.workflowId,
       executionId,
-      output: executionResult.output,
+      output: result.output,
       executedAt: new Date().toISOString(),
       metadata: payload.metadata,
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`[${requestId}] Workflow execution failed: ${workflowId}`, {
-      error: error.message,
-      stack: error.stack,
+      error: error instanceof Error ? error.message : String(error),
+      executionId,
     })
 
+    const executionResult = hasExecutionResult(error) ? error.executionResult : undefined
+    const { traceSpans } = executionResult ? buildTraceSpans(executionResult) : { traceSpans: [] }
+
     await loggingSession.safeCompleteWithError({
-      endedAt: new Date().toISOString(),
-      totalDurationMs: 0,
       error: {
-        message: error.message || 'Workflow execution failed',
-        stackTrace: error.stack,
+        message: error instanceof Error ? error.message : String(error),
+        stackTrace: error instanceof Error ? error.stack : undefined,
       },
+      traceSpans,
     })
 
     throw error
   }
 }
 
-export const workflowExecution = task({
+export const workflowExecutionTask = task({
   id: 'workflow-execution',
-  retry: {
-    maxAttempts: 1,
-  },
-  run: async (payload: WorkflowExecutionPayload) => executeWorkflowJob(payload),
+  machine: 'medium-1x',
+  run: executeWorkflowJob,
 })

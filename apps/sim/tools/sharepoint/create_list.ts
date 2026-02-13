@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type {
   SharepointCreateListResponse,
   SharepointList,
@@ -17,7 +17,6 @@ export const createListTool: ToolConfig<SharepointToolParams, SharepointCreateLi
   oauth: {
     required: true,
     provider: 'sharepoint',
-    additionalScopes: ['openid', 'profile', 'email', 'Sites.ReadWrite.All', 'offline_access'],
   },
 
   params: {
@@ -42,8 +41,9 @@ export const createListTool: ToolConfig<SharepointToolParams, SharepointCreateLi
     listDisplayName: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'Display name of the list to create',
+      visibility: 'user-or-llm',
+      description:
+        'Display name of the list to create. Example: Project Tasks or Customer Contacts',
     },
     listDescription: {
       type: 'string',

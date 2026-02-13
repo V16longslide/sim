@@ -11,8 +11,8 @@ export const responsesTool: ToolConfig<TypeformResponsesParams, TypeformResponse
     formId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'Typeform form ID',
+      visibility: 'user-or-llm',
+      description: 'Typeform form ID (e.g., "abc123XYZ")',
     },
     apiKey: {
       type: 'string',
@@ -23,26 +23,26 @@ export const responsesTool: ToolConfig<TypeformResponsesParams, TypeformResponse
     pageSize: {
       type: 'number',
       required: false,
-      visibility: 'user-only',
-      description: 'Number of responses to retrieve (default: 25)',
+      visibility: 'user-or-llm',
+      description: 'Number of responses to retrieve (e.g., 10, 25, 50)',
     },
     since: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Retrieve responses submitted after this date (ISO 8601 format)',
+      visibility: 'user-or-llm',
+      description: 'Retrieve responses submitted after this date (e.g., "2024-01-01T00:00:00Z")',
     },
     until: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Retrieve responses submitted before this date (ISO 8601 format)',
+      visibility: 'user-or-llm',
+      description: 'Retrieve responses submitted before this date (e.g., "2024-12-31T23:59:59Z")',
     },
     completed: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Filter by completion status (true/false)',
+      visibility: 'user-or-llm',
+      description: 'Filter by completion status (e.g., "true", "false", "all")',
     },
   },
 
@@ -53,7 +53,7 @@ export const responsesTool: ToolConfig<TypeformResponsesParams, TypeformResponse
       const queryParams = []
 
       if (params.pageSize) {
-        queryParams.push(`page_size=${params.pageSize}`)
+        queryParams.push(`page_size=${Number(params.pageSize)}`)
       }
 
       if (params.since) {
@@ -84,5 +84,21 @@ export const responsesTool: ToolConfig<TypeformResponsesParams, TypeformResponse
       success: true,
       output: data,
     }
+  },
+
+  outputs: {
+    total_items: {
+      type: 'number',
+      description: 'Total number of responses',
+    },
+    page_count: {
+      type: 'number',
+      description: 'Total number of pages available',
+    },
+    items: {
+      type: 'array',
+      description:
+        'Array of response objects with response_id, submitted_at, answers, and metadata',
+    },
   },
 }

@@ -1,13 +1,37 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { authorizeCredentialUse } from '@/lib/auth/credential-access'
-import { checkHybridAuth } from '@/lib/auth/hybrid'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
-import { getCredential, refreshTokenIfNeeded } from '@/app/api/auth/oauth/utils'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { generateRequestId } from '@/lib/core/utils/request'
+import { getCredential, getOAuthToken, refreshTokenIfNeeded } from '@/app/api/auth/oauth/utils'
 
 export const dynamic = 'force-dynamic'
 
 const logger = createLogger('OAuthTokenAPI')
+
+const SALESFORCE_INSTANCE_URL_REGEX = /__sf_instance__:([^\s]+)/
+
+const tokenRequestSchema = z
+  .object({
+    credentialId: z.string().min(1).optional(),
+    credentialAccountUserId: z.string().min(1).optional(),
+    providerId: z.string().min(1).optional(),
+    workflowId: z.string().min(1).nullish(),
+  })
+  .refine(
+    (data) => data.credentialId || (data.credentialAccountUserId && data.providerId),
+    'Either credentialId or (credentialAccountUserId + providerId) is required'
+  )
+
+const tokenQuerySchema = z.object({
+  credentialId: z
+    .string({
+      required_error: 'Credential ID is required',
+      invalid_type_error: 'Credential ID is required',
+    })
+    .min(1, 'Credential ID is required'),
+})
 
 /**
  * Get an access token for a specific credential
@@ -20,32 +44,106 @@ export async function POST(request: NextRequest) {
   logger.info(`[${requestId}] OAuth token API POST request received`)
 
   try {
-    // Parse request body
-    const body = await request.json()
-    const { credentialId, workflowId } = body
+    const rawBody = await request.json()
+    const parseResult = tokenRequestSchema.safeParse(rawBody)
+
+    if (!parseResult.success) {
+      const firstError = parseResult.error.errors[0]
+      const errorMessage = firstError?.message || 'Validation failed'
+
+      logger.warn(`[${requestId}] Invalid token request`, {
+        errors: parseResult.error.errors,
+      })
+
+      return NextResponse.json(
+        {
+          error: errorMessage,
+        },
+        { status: 400 }
+      )
+    }
+
+    const { credentialId, credentialAccountUserId, providerId, workflowId } = parseResult.data
+
+    if (credentialAccountUserId && providerId) {
+      logger.info(`[${requestId}] Fetching token by credentialAccountUserId + providerId`, {
+        credentialAccountUserId,
+        providerId,
+      })
+
+      const auth = await checkSessionOrInternalAuth(request, { requireWorkflowId: false })
+      if (!auth.success || auth.authType !== 'session' || !auth.userId) {
+        logger.warn(`[${requestId}] Unauthorized request for credentialAccountUserId path`, {
+          success: auth.success,
+          authType: auth.authType,
+        })
+        return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
+      }
+
+      if (auth.userId !== credentialAccountUserId) {
+        logger.warn(
+          `[${requestId}] User ${auth.userId} attempted to access credentials for ${credentialAccountUserId}`
+        )
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
+      }
+
+      try {
+        const accessToken = await getOAuthToken(credentialAccountUserId, providerId)
+        if (!accessToken) {
+          return NextResponse.json(
+            {
+              error: `No credential found for user ${credentialAccountUserId} and provider ${providerId}`,
+            },
+            { status: 404 }
+          )
+        }
+
+        return NextResponse.json({ accessToken }, { status: 200 })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to get OAuth token'
+        logger.warn(`[${requestId}] OAuth token error: ${message}`)
+        return NextResponse.json({ error: message }, { status: 403 })
+      }
+    }
 
     if (!credentialId) {
-      logger.warn(`[${requestId}] Credential ID is required`)
       return NextResponse.json({ error: 'Credential ID is required' }, { status: 400 })
     }
 
-    // We already have workflowId from the parsed body; avoid forcing hybrid auth to re-read it
     const authz = await authorizeCredentialUse(request, {
       credentialId,
-      workflowId,
+      workflowId: workflowId ?? undefined,
       requireWorkflowIdForInternal: false,
     })
     if (!authz.ok || !authz.credentialOwnerUserId) {
       return NextResponse.json({ error: authz.error || 'Unauthorized' }, { status: 403 })
     }
 
-    // Fetch the credential as the owner to enforce ownership scoping
     const credential = await getCredential(requestId, credentialId, authz.credentialOwnerUserId)
 
+    if (!credential) {
+      return NextResponse.json({ error: 'Credential not found' }, { status: 404 })
+    }
+
     try {
-      // Refresh the token if needed
       const { accessToken } = await refreshTokenIfNeeded(requestId, credential, credentialId)
-      return NextResponse.json({ accessToken }, { status: 200 })
+
+      let instanceUrl: string | undefined
+      if (credential.providerId === 'salesforce' && credential.scope) {
+        const instanceMatch = credential.scope.match(SALESFORCE_INSTANCE_URL_REGEX)
+        if (instanceMatch) {
+          instanceUrl = instanceMatch[1]
+        }
+      }
+
+      return NextResponse.json(
+        {
+          accessToken,
+          idToken: credential.idToken || undefined,
+          ...(instanceUrl && { instanceUrl }),
+        },
+        { status: 200 }
+      )
     } catch (error) {
       logger.error(`[${requestId}] Failed to refresh access token:`, error)
       return NextResponse.json({ error: 'Failed to refresh access token' }, { status: 401 })
@@ -63,22 +161,37 @@ export async function GET(request: NextRequest) {
   const requestId = generateRequestId()
 
   try {
-    // Get the credential ID from the query params
     const { searchParams } = new URL(request.url)
-    const credentialId = searchParams.get('credentialId')
-
-    if (!credentialId) {
-      logger.warn(`[${requestId}] Missing credential ID`)
-      return NextResponse.json({ error: 'Credential ID is required' }, { status: 400 })
+    const rawQuery = {
+      credentialId: searchParams.get('credentialId'),
     }
 
+    const parseResult = tokenQuerySchema.safeParse(rawQuery)
+
+    if (!parseResult.success) {
+      const firstError = parseResult.error.errors[0]
+      const errorMessage = firstError?.message || 'Validation failed'
+
+      logger.warn(`[${requestId}] Invalid query parameters`, {
+        errors: parseResult.error.errors,
+      })
+
+      return NextResponse.json(
+        {
+          error: errorMessage,
+        },
+        { status: 400 }
+      )
+    }
+
+    const { credentialId } = parseResult.data
+
     // For GET requests, we only support session-based authentication
-    const auth = await checkHybridAuth(request, { requireWorkflowId: false })
+    const auth = await checkSessionOrInternalAuth(request, { requireWorkflowId: false })
     if (!auth.success || auth.authType !== 'session' || !auth.userId) {
       return NextResponse.json({ error: 'User not authenticated' }, { status: 401 })
     }
 
-    // Get the credential from the database
     const credential = await getCredential(requestId, credentialId, auth.userId)
 
     if (!credential) {
@@ -92,7 +205,24 @@ export async function GET(request: NextRequest) {
 
     try {
       const { accessToken } = await refreshTokenIfNeeded(requestId, credential, credentialId)
-      return NextResponse.json({ accessToken }, { status: 200 })
+
+      // For Salesforce, extract instanceUrl from the scope field
+      let instanceUrl: string | undefined
+      if (credential.providerId === 'salesforce' && credential.scope) {
+        const instanceMatch = credential.scope.match(SALESFORCE_INSTANCE_URL_REGEX)
+        if (instanceMatch) {
+          instanceUrl = instanceMatch[1]
+        }
+      }
+
+      return NextResponse.json(
+        {
+          accessToken,
+          idToken: credential.idToken || undefined,
+          ...(instanceUrl && { instanceUrl }),
+        },
+        { status: 200 }
+      )
     } catch (_error) {
       return NextResponse.json({ error: 'Failed to refresh access token' }, { status: 401 })
     }

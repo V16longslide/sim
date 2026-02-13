@@ -4,18 +4,24 @@ export interface RequestParams {
   url: string
   method?: HttpMethod
   headers?: TableRow[]
-  body?: any
+  body?: unknown
   params?: TableRow[]
   pathParams?: Record<string, string>
   formData?: Record<string, string | Blob>
   timeout?: number
-  validateStatus?: (status: number) => boolean
 }
 
 export interface RequestResponse extends ToolResponse {
   output: {
-    data: any
+    data: unknown
     status: number
     headers: Record<string, string>
   }
+}
+
+export interface WebhookRequestParams {
+  url: string
+  body?: unknown
+  secret?: string
+  headers?: Record<string, string>
 }

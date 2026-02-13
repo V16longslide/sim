@@ -1,15 +1,14 @@
-import { RefreshCw } from 'lucide-react'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+  Button,
+  Input,
+  Label,
+  Modal,
+  ModalContent,
+  ModalDescription,
+  ModalFooter,
+  ModalHeader,
+  ModalTitle,
+} from '@/components/emcn'
 
 interface NoOrganizationViewProps {
   hasTeamPlan: boolean
@@ -42,38 +41,55 @@ export function NoOrganizationView({
 }: NoOrganizationViewProps) {
   if (hasTeamPlan || hasEnterprisePlan) {
     return (
-      <div className='px-6 pt-4 pb-4'>
-        <div className='flex flex-col gap-6'>
+      <div>
+        <div className='flex flex-col gap-[20px]'>
           {/* Header - matching settings page style */}
           <div>
-            <h4 className='font-medium text-sm'>Create Your Team Workspace</h4>
-            <p className='mt-1 text-muted-foreground text-xs'>
+            <h4 className='font-medium text-[14px] text-[var(--text-primary)]'>
+              Create Your Team Workspace
+            </h4>
+            <p className='mt-[4px] text-[12px] text-[var(--text-muted)]'>
               You're subscribed to a {hasEnterprisePlan ? 'enterprise' : 'team'} plan. Create your
               workspace to start collaborating with your team.
             </p>
           </div>
 
           {/* Form fields - clean layout without card */}
-          <div className='space-y-4'>
+          <div className='flex flex-col gap-[16px]'>
+            {/* Hidden decoy field to prevent browser autofill */}
+            <input
+              type='text'
+              name='fakeusernameremembered'
+              autoComplete='username'
+              style={{ position: 'absolute', left: '-9999px', opacity: 0, pointerEvents: 'none' }}
+              tabIndex={-1}
+              readOnly
+            />
             <div>
-              <Label htmlFor='orgName' className='font-medium text-sm'>
+              <Label htmlFor='team-name-field' className='font-medium text-[12px]'>
                 Team Name
               </Label>
               <Input
-                id='orgName'
+                id='team-name-field'
                 value={orgName}
                 onChange={onOrgNameChange}
                 placeholder='My Team'
-                className='mt-1'
+                className='mt-[4px]'
+                name='team_name_field'
+                autoComplete='off'
+                autoCorrect='off'
+                autoCapitalize='off'
+                data-lpignore='true'
+                data-form-type='other'
               />
             </div>
 
             <div>
-              <Label htmlFor='orgSlug' className='font-medium text-sm'>
+              <Label htmlFor='orgSlug' className='font-medium text-[12px]'>
                 Team URL
               </Label>
-              <div className='mt-1 flex items-center'>
-                <div className='rounded-l-[8px] border border-r-0 bg-muted px-3 py-2 text-muted-foreground text-sm'>
+              <div className='mt-[4px] flex items-center'>
+                <div className='rounded-l-[6px] border border-[var(--border-1)] border-r-0 bg-[var(--surface-4)] px-[12px] py-[6px] text-[12px] text-[var(--text-muted)]'>
                   sim.ai/team/
                 </div>
                 <Input
@@ -86,114 +102,126 @@ export function NoOrganizationView({
               </div>
             </div>
 
-            {error && (
-              <Alert variant='destructive' className='rounded-[8px]'>
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className='flex justify-end'>
-              <Button
-                onClick={onCreateOrganization}
-                disabled={!orgName || !orgSlug || isCreatingOrg}
-                className='h-9 rounded-[8px]'
-              >
-                {isCreatingOrg && <RefreshCw className='mr-2 h-4 w-4 animate-spin' />}
-                Create Team Workspace
-              </Button>
+            <div className='flex flex-col gap-[8px]'>
+              {error && (
+                <p className='text-[12px] text-[var(--text-error)] leading-tight'>{error}</p>
+              )}
+              <div className='flex justify-end'>
+                <Button
+                  variant='tertiary'
+                  onClick={onCreateOrganization}
+                  disabled={!orgName || !orgSlug || isCreatingOrg}
+                >
+                  {isCreatingOrg ? 'Creating...' : 'Create Team Workspace'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
 
-        <Dialog open={createOrgDialogOpen} onOpenChange={setCreateOrgDialogOpen}>
-          <DialogContent className='sm:max-w-md'>
-            <DialogHeader>
-              <DialogTitle className='font-medium text-sm'>Create Team Organization</DialogTitle>
-              <DialogDescription className='text-muted-foreground text-xs'>
+        <Modal open={createOrgDialogOpen} onOpenChange={setCreateOrgDialogOpen}>
+          <ModalContent className='sm:max-w-md'>
+            <ModalHeader>
+              <ModalTitle>Create Team Organization</ModalTitle>
+              <ModalDescription>
                 Create a new team organization to manage members and billing.
-              </DialogDescription>
-            </DialogHeader>
+              </ModalDescription>
+            </ModalHeader>
 
-            <div className='space-y-4'>
-              {error && (
-                <Alert variant='destructive' className='rounded-[8px]'>
-                  <AlertTitle>Error</AlertTitle>
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
+            <div className='flex flex-col gap-[16px]'>
+              {/* Hidden decoy field to prevent browser autofill */}
+              <input
+                type='text'
+                name='fakeusernameremembered'
+                autoComplete='username'
+                style={{ position: 'absolute', left: '-9999px', opacity: 0, pointerEvents: 'none' }}
+                tabIndex={-1}
+                readOnly
+              />
               <div>
-                <Label htmlFor='org-name' className='font-medium text-sm'>
+                <Label htmlFor='org-name-field' className='font-medium text-[12px]'>
                   Organization Name
                 </Label>
                 <Input
-                  id='org-name'
+                  id='org-name-field'
                   placeholder='Enter organization name'
                   value={orgName}
                   onChange={onOrgNameChange}
                   disabled={isCreatingOrg}
-                  className='mt-1'
+                  className='mt-[4px]'
+                  name='org_name_field'
+                  autoComplete='off'
+                  autoCorrect='off'
+                  autoCapitalize='off'
+                  data-lpignore='true'
+                  data-form-type='other'
                 />
               </div>
 
               <div>
-                <Label htmlFor='org-slug' className='font-medium text-sm'>
+                <Label htmlFor='org-slug-field' className='font-medium text-[12px]'>
                   Organization Slug
                 </Label>
                 <Input
-                  id='org-slug'
+                  id='org-slug-field'
                   placeholder='organization-slug'
                   value={orgSlug}
                   onChange={(e) => setOrgSlug(e.target.value)}
                   disabled={isCreatingOrg}
-                  className='mt-1'
+                  className='mt-[4px]'
+                  name='org_slug_field'
+                  autoComplete='off'
+                  autoCorrect='off'
+                  autoCapitalize='off'
+                  data-lpignore='true'
+                  data-form-type='other'
                 />
               </div>
-
-              <div className='flex justify-end gap-2 pt-2'>
-                <Button
-                  variant='outline'
-                  onClick={() => setCreateOrgDialogOpen(false)}
-                  disabled={isCreatingOrg}
-                  className='h-9 rounded-[8px]'
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={onCreateOrganization}
-                  disabled={isCreatingOrg || !orgName.trim()}
-                  className='h-9 rounded-[8px]'
-                >
-                  {isCreatingOrg && <RefreshCw className='mr-2 h-4 w-4 animate-spin' />}
-                  Create Organization
-                </Button>
-              </div>
             </div>
-          </DialogContent>
-        </Dialog>
+
+            {error && <p className='text-[12px] text-[var(--text-error)] leading-tight'>{error}</p>}
+
+            <ModalFooter>
+              <Button
+                variant='active'
+                onClick={() => setCreateOrgDialogOpen(false)}
+                disabled={isCreatingOrg}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant='tertiary'
+                onClick={onCreateOrganization}
+                disabled={isCreatingOrg || !orgName.trim()}
+              >
+                {isCreatingOrg ? 'Creating...' : 'Create Organization'}
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       </div>
     )
   }
 
   return (
-    <div className='space-y-4 p-6'>
-      <div className='space-y-6'>
-        <h3 className='font-medium text-sm'>No Team Workspace</h3>
-        <p className='text-muted-foreground text-sm'>
+    <div className='flex flex-col gap-[20px]'>
+      <div className='flex flex-col gap-[8px]'>
+        <h3 className='font-medium text-[14px] text-[var(--text-primary)]'>No Team Workspace</h3>
+        <p className='text-[12px] text-[var(--text-secondary)]'>
           You don't have a team workspace yet. To collaborate with others, first upgrade to a team
           or enterprise plan.
         </p>
+      </div>
 
+      <div>
         <Button
+          variant='tertiary'
           onClick={() => {
-            // Open the subscription tab
             const event = new CustomEvent('open-settings', {
               detail: { tab: 'subscription' },
             })
             window.dispatchEvent(event)
           }}
-          className='h-9 rounded-[8px]'
         >
           Upgrade to Team Plan
         </Button>

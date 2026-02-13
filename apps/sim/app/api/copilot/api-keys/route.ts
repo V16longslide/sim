@@ -1,12 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
-import { SIM_AGENT_API_URL_DEFAULT } from '@/lib/sim-agent'
-
-const logger = createLogger('CopilotApiKeys')
-
-const SIM_AGENT_API_URL = env.SIM_AGENT_API_URL || SIM_AGENT_API_URL_DEFAULT
+import { SIM_AGENT_API_URL } from '@/lib/copilot/constants'
+import { env } from '@/lib/core/config/env'
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,23 +22,32 @@ export async function GET(request: NextRequest) {
     })
 
     if (!res.ok) {
-      const errorBody = await res.text().catch(() => '')
-      logger.error('Sim Agent get-api-keys error', { status: res.status, error: errorBody })
       return NextResponse.json({ error: 'Failed to get keys' }, { status: res.status || 500 })
     }
 
-    const apiKeys = (await res.json().catch(() => null)) as { id: string; apiKey: string }[] | null
+    const apiKeys = (await res.json().catch(() => null)) as
+      | { id: string; apiKey: string; name?: string; createdAt?: string; lastUsed?: string }[]
+      | null
 
     if (!Array.isArray(apiKeys)) {
-      logger.error('Sim Agent get-api-keys returned invalid payload')
       return NextResponse.json({ error: 'Invalid response from Sim Agent' }, { status: 500 })
     }
 
-    const keys = apiKeys
+    const keys = apiKeys.map((k) => {
+      const value = typeof k.apiKey === 'string' ? k.apiKey : ''
+      const last6 = value.slice(-6)
+      const displayKey = `•••••${last6}`
+      return {
+        id: k.id,
+        displayKey,
+        name: k.name || null,
+        createdAt: k.createdAt || null,
+        lastUsed: k.lastUsed || null,
+      }
+    })
 
     return NextResponse.json({ keys }, { status: 200 })
   } catch (error) {
-    logger.error('Failed to get copilot API keys', { error })
     return NextResponse.json({ error: 'Failed to get keys' }, { status: 500 })
   }
 }
@@ -72,20 +76,16 @@ export async function DELETE(request: NextRequest) {
     })
 
     if (!res.ok) {
-      const errorBody = await res.text().catch(() => '')
-      logger.error('Sim Agent delete key error', { status: res.status, error: errorBody })
       return NextResponse.json({ error: 'Failed to delete key' }, { status: res.status || 500 })
     }
 
     const data = (await res.json().catch(() => null)) as { success?: boolean } | null
     if (!data?.success) {
-      logger.error('Sim Agent delete key returned invalid payload')
       return NextResponse.json({ error: 'Invalid response from Sim Agent' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (error) {
-    logger.error('Failed to delete copilot API key', { error })
     return NextResponse.json({ error: 'Failed to delete key' }, { status: 500 })
   }
 }

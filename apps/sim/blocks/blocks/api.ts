@@ -9,6 +9,9 @@ export const ApiBlock: BlockConfig<RequestResponse> = {
   longDescription:
     'This is a core workflow block. Connect to any external API with support for all standard HTTP methods and customizable request parameters. Configure headers, query parameters, and request bodies. Standard headers (User-Agent, Accept, Cache-Control, etc.) are automatically included.',
   docsLink: 'https://docs.sim.ai/blocks/api',
+  bestPractices: `
+  - Curl the endpoint yourself before filling out the API block to make sure it's working IF you have the necessary authentication headers. Clarify with the user if you need any additional headers.
+  `,
   category: 'blocks',
   bgColor: '#2F55FF',
   icon: ApiIcon,
@@ -17,7 +20,6 @@ export const ApiBlock: BlockConfig<RequestResponse> = {
       id: 'url',
       title: 'URL',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter URL',
       required: true,
     },
@@ -25,7 +27,6 @@ export const ApiBlock: BlockConfig<RequestResponse> = {
       id: 'method',
       title: 'Method',
       type: 'dropdown',
-      layout: 'half',
       required: true,
       options: [
         { label: 'GET', id: 'GET' },
@@ -39,14 +40,12 @@ export const ApiBlock: BlockConfig<RequestResponse> = {
       id: 'params',
       title: 'Query Params',
       type: 'table',
-      layout: 'full',
       columns: ['Key', 'Value'],
     },
     {
       id: 'headers',
       title: 'Headers',
       type: 'table',
-      layout: 'full',
       columns: ['Key', 'Value'],
       description:
         'Custom headers (standard headers like User-Agent, Accept, etc. are added automatically)',
@@ -55,7 +54,6 @@ export const ApiBlock: BlockConfig<RequestResponse> = {
       id: 'body',
       title: 'Body',
       type: 'code',
-      layout: 'full',
       placeholder: 'Enter JSON...',
       wandConfig: {
         enabled: true,
@@ -82,6 +80,15 @@ Example:
         generationType: 'json-object',
       },
     },
+    {
+      id: 'timeout',
+      title: 'Timeout (ms)',
+      type: 'short-input',
+      placeholder: '300000',
+      description:
+        'Request timeout in milliseconds (default: 300000 = 5 minutes, max: 600000 = 10 minutes)',
+      mode: 'advanced',
+    },
   ],
   tools: {
     access: ['http_request'],
@@ -92,6 +99,7 @@ Example:
     headers: { type: 'json', description: 'Request headers' },
     body: { type: 'json', description: 'Request body data' },
     params: { type: 'json', description: 'URL query parameters' },
+    timeout: { type: 'number', description: 'Request timeout in milliseconds' },
   },
   outputs: {
     data: { type: 'json', description: 'API response data (JSON, text, or other formats)' },

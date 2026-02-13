@@ -1,6 +1,11 @@
+import { db, workflow } from '@sim/db'
+import { eq } from 'drizzle-orm'
 import { BASE_EXECUTION_CHARGE } from '@/lib/billing/constants'
 import type { ExecutionEnvironment, ExecutionTrigger, WorkflowState } from '@/lib/logs/types'
-import { loadWorkflowFromNormalizedTables } from '@/lib/workflows/db-helpers'
+import {
+  loadDeployedWorkflowState,
+  loadWorkflowFromNormalizedTables,
+} from '@/lib/workflows/persistence/utils'
 
 export function createTriggerObject(
   type: ExecutionTrigger['type'],
@@ -31,7 +36,15 @@ export function createEnvironmentObject(
 }
 
 export async function loadWorkflowStateForExecution(workflowId: string): Promise<WorkflowState> {
-  const normalizedData = await loadWorkflowFromNormalizedTables(workflowId)
+  const [normalizedData, workflowRecord] = await Promise.all([
+    loadWorkflowFromNormalizedTables(workflowId),
+    db
+      .select({ variables: workflow.variables })
+      .from(workflow)
+      .where(eq(workflow.id, workflowId))
+      .limit(1)
+      .then((rows) => rows[0]),
+  ])
 
   if (!normalizedData) {
     throw new Error(
@@ -44,6 +57,26 @@ export async function loadWorkflowStateForExecution(workflowId: string): Promise
     edges: normalizedData.edges || [],
     loops: normalizedData.loops || {},
     parallels: normalizedData.parallels || {},
+    variables: (workflowRecord?.variables as WorkflowState['variables']) || undefined,
+  }
+}
+
+/**
+ * Load deployed workflow state for logging purposes.
+ * This fetches the active deployment state, ensuring logs capture
+ * the exact state that was executed (not the live editor state).
+ */
+export async function loadDeployedWorkflowStateForLogging(
+  workflowId: string
+): Promise<WorkflowState> {
+  const deployedData = await loadDeployedWorkflowState(workflowId)
+
+  return {
+    blocks: deployedData.blocks || {},
+    edges: deployedData.edges || [],
+    loops: deployedData.loops || {},
+    parallels: deployedData.parallels || {},
+    variables: deployedData.variables as WorkflowState['variables'],
   }
 }
 
@@ -62,7 +95,7 @@ export function calculateCostSummary(traceSpans: any[]): {
       input: number
       output: number
       total: number
-      tokens: { prompt: number; completion: number; total: number }
+      tokens: { input: number; output: number; total: number }
     }
   >
 } {
@@ -80,7 +113,6 @@ export function calculateCostSummary(traceSpans: any[]): {
     }
   }
 
-  // Recursively collect all spans with cost information from the trace span tree
   const collectCostSpans = (spans: any[]): any[] => {
     const costSpans: any[] = []
 
@@ -111,7 +143,7 @@ export function calculateCostSummary(traceSpans: any[]): {
       input: number
       output: number
       total: number
-      tokens: { prompt: number; completion: number; total: number }
+      tokens: { input: number; output: number; total: number }
     }
   > = {}
 
@@ -119,12 +151,10 @@ export function calculateCostSummary(traceSpans: any[]): {
     totalCost += span.cost.total || 0
     totalInputCost += span.cost.input || 0
     totalOutputCost += span.cost.output || 0
-    // Tokens are at span.tokens, not span.cost.tokens
     totalTokens += span.tokens?.total || 0
-    totalPromptTokens += span.tokens?.prompt || 0
-    totalCompletionTokens += span.tokens?.completion || 0
+    totalPromptTokens += span.tokens?.input ?? span.tokens?.prompt ?? 0
+    totalCompletionTokens += span.tokens?.output ?? span.tokens?.completion ?? 0
 
-    // Aggregate model-specific costs - model is at span.model, not span.cost.model
     if (span.model) {
       const model = span.model
       if (!models[model]) {
@@ -132,14 +162,14 @@ export function calculateCostSummary(traceSpans: any[]): {
           input: 0,
           output: 0,
           total: 0,
-          tokens: { prompt: 0, completion: 0, total: 0 },
+          tokens: { input: 0, output: 0, total: 0 },
         }
       }
       models[model].input += span.cost.input || 0
       models[model].output += span.cost.output || 0
       models[model].total += span.cost.total || 0
-      models[model].tokens.prompt += span.tokens?.prompt || 0
-      models[model].tokens.completion += span.tokens?.completion || 0
+      models[model].tokens.input += span.tokens?.input ?? span.tokens?.prompt ?? 0
+      models[model].tokens.output += span.tokens?.output ?? span.tokens?.completion ?? 0
       models[model].tokens.total += span.tokens?.total || 0
     }
   }

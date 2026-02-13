@@ -1,19 +1,22 @@
 'use client'
 
 import { Suspense, useEffect, useState } from 'react'
+import { createLogger } from '@sim/logger'
 import { Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { client, useSession } from '@/lib/auth-client'
-import { quickValidateEmail } from '@/lib/email/validation'
-import { createLogger } from '@/lib/logs/console/logger'
-import { cn } from '@/lib/utils'
+import { client, useSession } from '@/lib/auth/auth-client'
+import { getEnv, isFalsy, isTruthy } from '@/lib/core/config/env'
+import { cn } from '@/lib/core/utils/cn'
+import { quickValidateEmail } from '@/lib/messaging/email/validation'
+import { inter } from '@/app/_styles/fonts/inter/inter'
+import { soehne } from '@/app/_styles/fonts/soehne/soehne'
+import { BrandedButton } from '@/app/(auth)/components/branded-button'
 import { SocialLoginButtons } from '@/app/(auth)/components/social-login-buttons'
-import { inter } from '@/app/fonts/inter'
-import { soehne } from '@/app/fonts/soehne/soehne'
+import { SSOLoginButton } from '@/app/(auth)/components/sso-login-button'
+import { useBrandedButtonClass } from '@/hooks/use-branded-button-class'
 
 const logger = createLogger('SignupForm')
 
@@ -93,7 +96,7 @@ function SignupFormContent({
   const [showEmailValidationError, setShowEmailValidationError] = useState(false)
   const [redirectUrl, setRedirectUrl] = useState('')
   const [isInviteFlow, setIsInviteFlow] = useState(false)
-  const [buttonClass, setButtonClass] = useState('auth-button-gradient')
+  const buttonClass = useBrandedButtonClass()
 
   const [name, setName] = useState('')
   const [nameErrors, setNameErrors] = useState<string[]>([])
@@ -106,11 +109,15 @@ function SignupFormContent({
       setEmail(emailParam)
     }
 
-    const redirectParam = searchParams.get('redirect')
+    // Check both 'redirect' and 'callbackUrl' params (login page uses callbackUrl)
+    const redirectParam = searchParams.get('redirect') || searchParams.get('callbackUrl')
     if (redirectParam) {
       setRedirectUrl(redirectParam)
 
-      if (redirectParam.startsWith('/invite/')) {
+      if (
+        redirectParam.startsWith('/invite/') ||
+        redirectParam.startsWith('/credential-account/')
+      ) {
         setIsInviteFlow(true)
       }
     }
@@ -118,31 +125,6 @@ function SignupFormContent({
     const inviteFlowParam = searchParams.get('invite_flow')
     if (inviteFlowParam === 'true') {
       setIsInviteFlow(true)
-    }
-
-    const checkCustomBrand = () => {
-      const computedStyle = getComputedStyle(document.documentElement)
-      const brandAccent = computedStyle.getPropertyValue('--brand-accent-hex').trim()
-
-      if (brandAccent && brandAccent !== '#6f3dfa') {
-        setButtonClass('auth-button-custom')
-      } else {
-        setButtonClass('auth-button-gradient')
-      }
-    }
-
-    checkCustomBrand()
-
-    window.addEventListener('resize', checkCustomBrand)
-    const observer = new MutationObserver(checkCustomBrand)
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    })
-
-    return () => {
-      window.removeEventListener('resize', checkCustomBrand)
-      observer.disconnect()
     }
   }, [searchParams])
 
@@ -352,15 +334,6 @@ function SignupFormContent({
         }
       }
 
-      try {
-        await client.emailOtp.sendVerificationOtp({
-          email: emailValue,
-          type: 'sign-in',
-        })
-      } catch (otpErr) {
-        logger.warn('Failed to send sign-in OTP after signup; user can press Resend', otpErr)
-      }
-
       router.push('/verify?fromSignup=true')
     } catch (error) {
       logger.error('Signup error:', error)
@@ -379,120 +352,150 @@ function SignupFormContent({
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className={`${inter.className} mt-8 space-y-8`}>
-        <div className='space-y-6'>
-          <div className='space-y-2'>
-            <div className='flex items-center justify-between'>
-              <Label htmlFor='name'>Full name</Label>
-            </div>
-            <Input
-              id='name'
-              name='name'
-              placeholder='Enter your name'
-              type='text'
-              autoCapitalize='words'
-              autoComplete='name'
-              title='Name can only contain letters, spaces, hyphens, and apostrophes'
-              value={name}
-              onChange={handleNameChange}
-              className={cn(
-                'rounded-[10px] shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
-                showNameValidationError &&
-                  nameErrors.length > 0 &&
-                  'border-red-500 focus:border-red-500 focus:ring-red-100 focus-visible:ring-red-500'
-              )}
-            />
-            {showNameValidationError && nameErrors.length > 0 && (
-              <div className='mt-1 space-y-1 text-red-400 text-xs'>
-                {nameErrors.map((error, index) => (
-                  <p key={index}>{error}</p>
-                ))}
+      {/* SSO Login Button (primary top-only when it is the only method) */}
+      {(() => {
+        const ssoEnabled = isTruthy(getEnv('NEXT_PUBLIC_SSO_ENABLED'))
+        const emailEnabled = !isFalsy(getEnv('NEXT_PUBLIC_EMAIL_PASSWORD_SIGNUP_ENABLED'))
+        const hasSocial = githubAvailable || googleAvailable
+        const hasOnlySSO = ssoEnabled && !emailEnabled && !hasSocial
+        return hasOnlySSO
+      })() && (
+        <div className={`${inter.className} mt-8`}>
+          <SSOLoginButton
+            callbackURL={redirectUrl || '/workspace'}
+            variant='primary'
+            primaryClassName={buttonClass}
+          />
+        </div>
+      )}
+
+      {/* Email/Password Form - show unless explicitly disabled */}
+      {!isFalsy(getEnv('NEXT_PUBLIC_EMAIL_PASSWORD_SIGNUP_ENABLED')) && (
+        <form onSubmit={onSubmit} className={`${inter.className} mt-8 space-y-8`}>
+          <div className='space-y-6'>
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between'>
+                <Label htmlFor='name'>Full name</Label>
               </div>
-            )}
-          </div>
-          <div className='space-y-2'>
-            <div className='flex items-center justify-between'>
-              <Label htmlFor='email'>Email</Label>
-            </div>
-            <Input
-              id='email'
-              name='email'
-              placeholder='Enter your email'
-              autoCapitalize='none'
-              autoComplete='email'
-              autoCorrect='off'
-              value={email}
-              onChange={handleEmailChange}
-              className={cn(
-                'rounded-[10px] shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
-                (emailError || (showEmailValidationError && emailErrors.length > 0)) &&
-                  'border-red-500 focus:border-red-500 focus:ring-red-100 focus-visible:ring-red-500'
-              )}
-            />
-            {showEmailValidationError && emailErrors.length > 0 && (
-              <div className='mt-1 space-y-1 text-red-400 text-xs'>
-                {emailErrors.map((error, index) => (
-                  <p key={index}>{error}</p>
-                ))}
-              </div>
-            )}
-            {emailError && !showEmailValidationError && (
-              <div className='mt-1 text-red-400 text-xs'>
-                <p>{emailError}</p>
-              </div>
-            )}
-          </div>
-          <div className='space-y-2'>
-            <div className='flex items-center justify-between'>
-              <Label htmlFor='password'>Password</Label>
-            </div>
-            <div className='relative'>
               <Input
-                id='password'
-                name='password'
-                type={showPassword ? 'text' : 'password'}
-                autoCapitalize='none'
-                autoComplete='new-password'
-                placeholder='Enter your password'
-                autoCorrect='off'
-                value={password}
-                onChange={handlePasswordChange}
+                id='name'
+                name='name'
+                placeholder='Enter your name'
+                type='text'
+                autoCapitalize='words'
+                autoComplete='name'
+                title='Name can only contain letters, spaces, hyphens, and apostrophes'
+                value={name}
+                onChange={handleNameChange}
                 className={cn(
-                  'rounded-[10px] pr-10 shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
-                  showValidationError &&
-                    passwordErrors.length > 0 &&
+                  'rounded-[10px] shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
+                  showNameValidationError &&
+                    nameErrors.length > 0 &&
                     'border-red-500 focus:border-red-500 focus:ring-red-100 focus-visible:ring-red-500'
                 )}
               />
-              <button
-                type='button'
-                onClick={() => setShowPassword(!showPassword)}
-                className='-translate-y-1/2 absolute top-1/2 right-3 text-gray-500 transition hover:text-gray-700'
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
+              {showNameValidationError && nameErrors.length > 0 && (
+                <div className='mt-1 space-y-1 text-red-400 text-xs'>
+                  {nameErrors.map((error, index) => (
+                    <p key={index}>{error}</p>
+                  ))}
+                </div>
+              )}
             </div>
-            {showValidationError && passwordErrors.length > 0 && (
-              <div className='mt-1 space-y-1 text-red-400 text-xs'>
-                {passwordErrors.map((error, index) => (
-                  <p key={index}>{error}</p>
-                ))}
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between'>
+                <Label htmlFor='email'>Email</Label>
               </div>
-            )}
+              <Input
+                id='email'
+                name='email'
+                placeholder='Enter your email'
+                autoCapitalize='none'
+                autoComplete='email'
+                autoCorrect='off'
+                value={email}
+                onChange={handleEmailChange}
+                className={cn(
+                  'rounded-[10px] shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
+                  (emailError || (showEmailValidationError && emailErrors.length > 0)) &&
+                    'border-red-500 focus:border-red-500 focus:ring-red-100 focus-visible:ring-red-500'
+                )}
+              />
+              {showEmailValidationError && emailErrors.length > 0 && (
+                <div className='mt-1 space-y-1 text-red-400 text-xs'>
+                  {emailErrors.map((error, index) => (
+                    <p key={index}>{error}</p>
+                  ))}
+                </div>
+              )}
+              {emailError && !showEmailValidationError && (
+                <div className='mt-1 text-red-400 text-xs'>
+                  <p>{emailError}</p>
+                </div>
+              )}
+            </div>
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between'>
+                <Label htmlFor='password'>Password</Label>
+              </div>
+              <div className='relative'>
+                <Input
+                  id='password'
+                  name='password'
+                  type={showPassword ? 'text' : 'password'}
+                  autoCapitalize='none'
+                  autoComplete='new-password'
+                  placeholder='Enter your password'
+                  autoCorrect='off'
+                  value={password}
+                  onChange={handlePasswordChange}
+                  className={cn(
+                    'rounded-[10px] pr-10 shadow-sm transition-colors focus:border-gray-400 focus:ring-2 focus:ring-gray-100',
+                    showValidationError &&
+                      passwordErrors.length > 0 &&
+                      'border-red-500 focus:border-red-500 focus:ring-red-100 focus-visible:ring-red-500'
+                  )}
+                />
+                <button
+                  type='button'
+                  onClick={() => setShowPassword(!showPassword)}
+                  className='-translate-y-1/2 absolute top-1/2 right-3 text-gray-500 transition hover:text-gray-700'
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+              {showValidationError && passwordErrors.length > 0 && (
+                <div className='mt-1 space-y-1 text-red-400 text-xs'>
+                  {passwordErrors.map((error, index) => (
+                    <p key={index}>{error}</p>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
 
-        <Button
-          type='submit'
-          className={`${buttonClass} flex w-full items-center justify-center gap-2 rounded-[10px] border font-medium text-[15px] text-white transition-all duration-200`}
-          disabled={isLoading}
-        >
-          {isLoading ? 'Creating account...' : 'Create account'}
-        </Button>
-      </form>
+          <BrandedButton
+            type='submit'
+            disabled={isLoading}
+            loading={isLoading}
+            loadingText='Creating account'
+          >
+            Create account
+          </BrandedButton>
+        </form>
+      )}
 
-      {(githubAvailable || googleAvailable) && (
+      {/* Divider - show when we have multiple auth methods */}
+      {(() => {
+        const ssoEnabled = isTruthy(getEnv('NEXT_PUBLIC_SSO_ENABLED'))
+        const emailEnabled = !isFalsy(getEnv('NEXT_PUBLIC_EMAIL_PASSWORD_SIGNUP_ENABLED'))
+        const hasSocial = githubAvailable || googleAvailable
+        const hasOnlySSO = ssoEnabled && !emailEnabled && !hasSocial
+        const showBottomSection = hasSocial || (ssoEnabled && !hasOnlySSO)
+        const showDivider = (emailEnabled || hasOnlySSO) && showBottomSection
+        return showDivider
+      })() && (
         <div className={`${inter.className} relative my-6 font-light`}>
           <div className='absolute inset-0 flex items-center'>
             <div className='auth-divider w-full border-t' />
@@ -503,12 +506,36 @@ function SignupFormContent({
         </div>
       )}
 
-      <SocialLoginButtons
-        githubAvailable={githubAvailable}
-        googleAvailable={googleAvailable}
-        callbackURL={redirectUrl || '/workspace'}
-        isProduction={isProduction}
-      />
+      {(() => {
+        const ssoEnabled = isTruthy(getEnv('NEXT_PUBLIC_SSO_ENABLED'))
+        const emailEnabled = !isFalsy(getEnv('NEXT_PUBLIC_EMAIL_PASSWORD_SIGNUP_ENABLED'))
+        const hasSocial = githubAvailable || googleAvailable
+        const hasOnlySSO = ssoEnabled && !emailEnabled && !hasSocial
+        const showBottomSection = hasSocial || (ssoEnabled && !hasOnlySSO)
+        return showBottomSection
+      })() && (
+        <div
+          className={cn(
+            inter.className,
+            isFalsy(getEnv('NEXT_PUBLIC_EMAIL_PASSWORD_SIGNUP_ENABLED')) ? 'mt-8' : undefined
+          )}
+        >
+          <SocialLoginButtons
+            githubAvailable={githubAvailable}
+            googleAvailable={googleAvailable}
+            callbackURL={redirectUrl || '/workspace'}
+            isProduction={isProduction}
+          >
+            {isTruthy(getEnv('NEXT_PUBLIC_SSO_ENABLED')) && (
+              <SSOLoginButton
+                callbackURL={redirectUrl || '/workspace'}
+                variant='outline'
+                primaryClassName={buttonClass}
+              />
+            )}
+          </SocialLoginButtons>
+        </div>
+      )}
 
       <div className={`${inter.className} pt-6 text-center font-light text-[14px]`}>
         <span className='font-normal'>Already have an account? </span>

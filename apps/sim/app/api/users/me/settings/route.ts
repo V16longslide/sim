@@ -1,21 +1,18 @@
 import { db } from '@sim/db'
 import { settings } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getSession } from '@/lib/auth'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import { generateRequestId } from '@/lib/core/utils/request'
 
 const logger = createLogger('UserSettingsAPI')
 
 const SettingsSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).optional(),
   autoConnect: z.boolean().optional(),
-  autoFillEnvVars: z.boolean().optional(), // DEPRECATED: kept for backwards compatibility
-  autoPan: z.boolean().optional(),
-  consoleExpandedByDefault: z.boolean().optional(),
   telemetryEnabled: z.boolean().optional(),
   emailPreferences: z
     .object({
@@ -26,18 +23,24 @@ const SettingsSchema = z.object({
     })
     .optional(),
   billingUsageNotificationsEnabled: z.boolean().optional(),
+  showTrainingControls: z.boolean().optional(),
+  superUserModeEnabled: z.boolean().optional(),
+  errorNotificationsEnabled: z.boolean().optional(),
+  snapToGridSize: z.number().min(0).max(50).optional(),
+  showActionBar: z.boolean().optional(),
 })
 
-// Default settings values
 const defaultSettings = {
-  theme: 'system',
+  theme: 'dark',
   autoConnect: true,
-  autoFillEnvVars: true, // DEPRECATED: kept for backwards compatibility, always true
-  autoPan: true,
-  consoleExpandedByDefault: true,
   telemetryEnabled: true,
   emailPreferences: {},
   billingUsageNotificationsEnabled: true,
+  showTrainingControls: false,
+  superUserModeEnabled: false,
+  errorNotificationsEnabled: true,
+  snapToGridSize: 0,
+  showActionBar: true,
 }
 
 export async function GET() {
@@ -46,7 +49,6 @@ export async function GET() {
   try {
     const session = await getSession()
 
-    // Return default settings for unauthenticated users instead of 401 error
     if (!session?.user?.id) {
       logger.info(`[${requestId}] Returning default settings for unauthenticated user`)
       return NextResponse.json({ data: defaultSettings }, { status: 200 })
@@ -66,19 +68,20 @@ export async function GET() {
         data: {
           theme: userSettings.theme,
           autoConnect: userSettings.autoConnect,
-          autoFillEnvVars: userSettings.autoFillEnvVars, // DEPRECATED: kept for backwards compatibility
-          autoPan: userSettings.autoPan,
-          consoleExpandedByDefault: userSettings.consoleExpandedByDefault,
           telemetryEnabled: userSettings.telemetryEnabled,
           emailPreferences: userSettings.emailPreferences ?? {},
           billingUsageNotificationsEnabled: userSettings.billingUsageNotificationsEnabled ?? true,
+          showTrainingControls: userSettings.showTrainingControls ?? false,
+          superUserModeEnabled: userSettings.superUserModeEnabled ?? true,
+          errorNotificationsEnabled: userSettings.errorNotificationsEnabled ?? true,
+          snapToGridSize: userSettings.snapToGridSize ?? 0,
+          showActionBar: userSettings.showActionBar ?? true,
         },
       },
       { status: 200 }
     )
   } catch (error: any) {
     logger.error(`[${requestId}] Settings fetch error`, error)
-    // Return default settings on error instead of error response
     return NextResponse.json({ data: defaultSettings }, { status: 200 })
   }
 }
@@ -89,7 +92,6 @@ export async function PATCH(request: Request) {
   try {
     const session = await getSession()
 
-    // Return success for unauthenticated users instead of error
     if (!session?.user?.id) {
       logger.info(
         `[${requestId}] Settings update attempted by unauthenticated user - acknowledged without saving`
@@ -103,7 +105,6 @@ export async function PATCH(request: Request) {
     try {
       const validatedData = SettingsSchema.parse(body)
 
-      // Store the settings
       await db
         .insert(settings)
         .values({
@@ -135,7 +136,6 @@ export async function PATCH(request: Request) {
     }
   } catch (error: any) {
     logger.error(`[${requestId}] Settings update error`, error)
-    // Return success on error instead of error response
     return NextResponse.json({ success: true }, { status: 200 })
   }
 }

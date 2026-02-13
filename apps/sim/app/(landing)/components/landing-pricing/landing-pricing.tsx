@@ -1,6 +1,8 @@
 'use client'
 
+import type { ComponentType, SVGProps } from 'react'
 import { useState } from 'react'
+import { createLogger } from '@sim/logger'
 import type { LucideIcon } from 'lucide-react'
 import {
   ArrowRight,
@@ -8,13 +10,12 @@ import {
   Code2,
   Database,
   DollarSign,
-  Users,
-  Workflow,
+  HardDrive,
+  Timer,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { createLogger } from '@/lib/logs/console/logger'
-import { cn } from '@/lib/utils'
-import { inter } from '@/app/fonts/inter'
+import { cn } from '@/lib/core/utils/cn'
+import { inter } from '@/app/_styles/fonts/inter/inter'
 import {
   ENTERPRISE_PLAN_FEATURES,
   PRO_PLAN_FEATURES,
@@ -24,7 +25,7 @@ import {
 const logger = createLogger('LandingPricing')
 
 interface PricingFeature {
-  icon: LucideIcon
+  icon: LucideIcon | ComponentType<SVGProps<SVGSVGElement>>
   text: string
 }
 
@@ -41,9 +42,9 @@ interface PricingTier {
  * Free plan features with consistent icons
  */
 const FREE_PLAN_FEATURES: PricingFeature[] = [
-  { icon: DollarSign, text: '$10 usage limit' },
-  { icon: Workflow, text: 'Public template access' },
-  { icon: Users, text: 'Community support' },
+  { icon: DollarSign, text: '$20 usage limit' },
+  { icon: HardDrive, text: '5GB file storage' },
+  { icon: Timer, text: '5 min execution limit' },
   { icon: Database, text: 'Limited log retention' },
   { icon: Code2, text: 'CLI/SDK Access' },
 ]
@@ -228,7 +229,7 @@ function PricingCard({
  */
 export default function LandingPricing() {
   return (
-    <section id='pricing' className='px-4 pt-[19px] sm:px-0 sm:pt-0' aria-label='Pricing plans'>
+    <section id='pricing' className='px-4 pt-[23px] sm:px-0 sm:pt-[4px]' aria-label='Pricing plans'>
       <h2 className='sr-only'>Pricing Plans</h2>
       <div className='relative mx-auto w-full max-w-[1289px]'>
         <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-0 lg:grid-cols-4'>

@@ -17,8 +17,21 @@ export const getRowTool: ToolConfig<SupabaseGetRowParams, SupabaseGetRowResponse
     table: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
+      visibility: 'user-or-llm',
       description: 'The name of the Supabase table to query',
+    },
+    schema: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Database schema to query from (default: public). Use this to access tables in other schemas.',
+    },
+    select: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Columns to return (comma-separated). Defaults to * (all columns)',
     },
     filter: {
       type: 'string',
@@ -29,7 +42,7 @@ export const getRowTool: ToolConfig<SupabaseGetRowParams, SupabaseGetRowResponse
     apiKey: {
       type: 'string',
       required: true,
-      visibility: 'hidden',
+      visibility: 'user-only',
       description: 'Your Supabase service role secret key',
     },
   },
@@ -37,7 +50,8 @@ export const getRowTool: ToolConfig<SupabaseGetRowParams, SupabaseGetRowResponse
   request: {
     url: (params) => {
       // Construct the URL for the Supabase REST API
-      let url = `https://${params.projectId}.supabase.co/rest/v1/${params.table}?select=*`
+      const selectColumns = params.select?.trim() || '*'
+      let url = `https://${params.projectId}.supabase.co/rest/v1/${params.table}?select=${encodeURIComponent(selectColumns)}`
 
       // Add filters (required for get_row) - using PostgREST syntax
       if (params.filter?.trim()) {
@@ -50,10 +64,16 @@ export const getRowTool: ToolConfig<SupabaseGetRowParams, SupabaseGetRowResponse
       return url
     },
     method: 'GET',
-    headers: (params) => ({
-      apikey: params.apiKey,
-      Authorization: `Bearer ${params.apiKey}`,
-    }),
+    headers: (params) => {
+      const headers: Record<string, string> = {
+        apikey: params.apiKey,
+        Authorization: `Bearer ${params.apiKey}`,
+      }
+      if (params.schema) {
+        headers['Accept-Profile'] = params.schema
+      }
+      return headers
+    },
   },
 
   transformResponse: async (response: Response) => {

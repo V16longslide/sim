@@ -1,20 +1,10 @@
 import { ConnectIcon } from '@/components/icons'
-import { isHosted } from '@/lib/environment'
-import type { BlockConfig } from '@/blocks/types'
+import { AuthMode, type BlockConfig } from '@/blocks/types'
+import { getProviderCredentialSubBlocks, PROVIDER_CREDENTIAL_INPUTS } from '@/blocks/utils'
 import type { ProviderId } from '@/providers/types'
-import {
-  getAllModelProviders,
-  getBaseModelProviders,
-  getHostedModels,
-  getProviderIcon,
-  providers,
-} from '@/providers/utils'
-import { useProvidersStore } from '@/stores/providers/store'
+import { getBaseModelProviders, getProviderIcon } from '@/providers/utils'
+import { useProvidersStore } from '@/stores/providers'
 import type { ToolResponse } from '@/tools/types'
-
-const getCurrentOllamaModels = () => {
-  return useProvidersStore.getState().providers.ollama.models
-}
 
 interface RouterResponse extends ToolResponse {
   output: {
@@ -48,6 +38,9 @@ interface TargetBlock {
   currentState?: any
 }
 
+/**
+ * Generates the system prompt for the legacy router (block-based).
+ */
 export const generateRouterPrompt = (prompt: string, targetBlocks?: TargetBlock[]): string => {
   const basePrompt = `You are an intelligent routing agent responsible for directing workflow requests to the most appropriate block. Your task is to analyze the input and determine the single most suitable destination based on the request.
 
@@ -104,21 +97,87 @@ Example: "2acd9007-27e8-4510-a487-73d3b825e7c1"
 Remember: Your response must be ONLY the block ID - no additional text, formatting, or explanation.`
 }
 
+/**
+ * Generates the system prompt for the port-based router (v2).
+ * Instead of selecting a block by ID, it selects a route by evaluating all route descriptions.
+ */
+export const generateRouterV2Prompt = (
+  context: string,
+  routes: Array<{ id: string; title: string; value: string }>
+): string => {
+  const routesInfo = routes
+    .map(
+      (route, index) => `
+Route ${index + 1}:
+ID: ${route.id}
+Description: ${route.value || 'No description provided'}
+---`
+    )
+    .join('\n')
+
+  return `You are a DETERMINISTIC routing agent. You MUST select exactly ONE option.
+
+Available Routes:
+${routesInfo}
+
+Context to route:
+${context}
+
+ROUTING RULES:
+1. ALWAYS prefer selecting a route over NO_MATCH
+2. Pick the route whose description BEST matches the context, even if it's not a perfect match
+3. If the context is even partially related to a route's description, select that route
+4. ONLY output NO_MATCH if the context is completely unrelated to ALL route descriptions
+
+Respond with a JSON object containing:
+- route: EXACTLY one route ID (copied exactly as shown above) OR "NO_MATCH"
+- reasoning: A brief explanation (1-2 sentences) of why you chose this route`
+}
+
+/**
+ * Helper to get model options for both router versions.
+ */
+const getModelOptions = () => {
+  const providersState = useProvidersStore.getState()
+  const baseModels = providersState.providers.base.models
+  const ollamaModels = providersState.providers.ollama.models
+  const vllmModels = providersState.providers.vllm.models
+  const openrouterModels = providersState.providers.openrouter.models
+  const allModels = Array.from(
+    new Set([...baseModels, ...ollamaModels, ...vllmModels, ...openrouterModels])
+  )
+
+  return allModels.map((model) => {
+    const icon = getProviderIcon(model)
+    return { label: model, id: model, ...(icon && { icon }) }
+  })
+}
+
+/**
+ * Legacy Router Block (block-based routing).
+ * Hidden from toolbar but still supported for existing workflows.
+ */
 export const RouterBlock: BlockConfig<RouterResponse> = {
   type: 'router',
-  name: 'Router',
+  name: 'Router (Legacy)',
   description: 'Route workflow',
+  authMode: AuthMode.ApiKey,
+  docsLink: 'https://docs.sim.ai/blocks/router',
   longDescription:
     'This is a core workflow block. Intelligently direct workflow execution to different paths based on input analysis. Use natural language to instruct the router to route to certain blocks based on the input.',
+  bestPractices: `
+  - For the prompt, make it almost programmatic. Use the system prompt to define the routing criteria. Should be very specific with no ambiguity.
+  - Use the target block *names* to define the routing criteria.
+  `,
   category: 'blocks',
   bgColor: '#28C43F',
   icon: ConnectIcon,
+  hideFromToolbar: true, // Hide legacy version from toolbar
   subBlocks: [
     {
       id: 'prompt',
       title: 'Prompt',
       type: 'long-input',
-      layout: 'full',
       placeholder: 'Route to the correct block based on the input...',
       required: true,
     },
@@ -126,74 +185,16 @@ export const RouterBlock: BlockConfig<RouterResponse> = {
       id: 'model',
       title: 'Model',
       type: 'combobox',
-      layout: 'half',
       placeholder: 'Type or select a model...',
       required: true,
-      options: () => {
-        const providersState = useProvidersStore.getState()
-        const ollamaModels = providersState.providers.ollama.models
-        const openrouterModels = providersState.providers.openrouter.models
-        const baseModels = Object.keys(getBaseModelProviders())
-        const allModels = Array.from(new Set([...baseModels, ...ollamaModels, ...openrouterModels]))
-
-        return allModels.map((model) => {
-          const icon = getProviderIcon(model)
-          return { label: model, id: model, ...(icon && { icon }) }
-        })
-      },
+      defaultValue: 'claude-sonnet-4-5',
+      options: getModelOptions,
     },
-    {
-      id: 'apiKey',
-      title: 'API Key',
-      type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter your API key',
-      password: true,
-      connectionDroppable: false,
-      required: true,
-      // Hide API key for hosted models and Ollama models
-      condition: isHosted
-        ? {
-            field: 'model',
-            value: getHostedModels(),
-            not: true, // Show for all models EXCEPT those listed
-          }
-        : () => ({
-            field: 'model',
-            value: getCurrentOllamaModels(),
-            not: true, // Show for all models EXCEPT Ollama models
-          }),
-    },
-    {
-      id: 'azureEndpoint',
-      title: 'Azure OpenAI Endpoint',
-      type: 'short-input',
-      layout: 'full',
-      password: true,
-      placeholder: 'https://your-resource.openai.azure.com',
-      connectionDroppable: false,
-      condition: {
-        field: 'model',
-        value: providers['azure-openai'].models,
-      },
-    },
-    {
-      id: 'azureApiVersion',
-      title: 'Azure API Version',
-      type: 'short-input',
-      layout: 'full',
-      placeholder: '2024-07-01-preview',
-      connectionDroppable: false,
-      condition: {
-        field: 'model',
-        value: providers['azure-openai'].models,
-      },
-    },
+    ...getProviderCredentialSubBlocks(),
     {
       id: 'temperature',
       title: 'Temperature',
       type: 'slider',
-      layout: 'half',
       hidden: true,
       min: 0,
       max: 2,
@@ -202,7 +203,6 @@ export const RouterBlock: BlockConfig<RouterResponse> = {
       id: 'systemPrompt',
       title: 'System Prompt',
       type: 'code',
-      layout: 'full',
       hidden: true,
       value: (params: Record<string, any>) => {
         return generateRouterPrompt(params.prompt || '')
@@ -224,7 +224,7 @@ export const RouterBlock: BlockConfig<RouterResponse> = {
         if (!model) {
           throw new Error('No model selected')
         }
-        const tool = getAllModelProviders()[model as ProviderId]
+        const tool = getBaseModelProviders()[model as ProviderId]
         if (!tool) {
           throw new Error(`Invalid model selected: ${model}`)
         }
@@ -235,9 +235,7 @@ export const RouterBlock: BlockConfig<RouterResponse> = {
   inputs: {
     prompt: { type: 'string', description: 'Routing prompt content' },
     model: { type: 'string', description: 'AI model to use' },
-    apiKey: { type: 'string', description: 'Provider API key' },
-    azureEndpoint: { type: 'string', description: 'Azure OpenAI endpoint URL' },
-    azureApiVersion: { type: 'string', description: 'Azure API version' },
+    ...PROVIDER_CREDENTIAL_INPUTS,
     temperature: {
       type: 'number',
       description: 'Response randomness level (low for consistent routing)',
@@ -248,6 +246,115 @@ export const RouterBlock: BlockConfig<RouterResponse> = {
     model: { type: 'string', description: 'Model used' },
     tokens: { type: 'json', description: 'Token usage' },
     cost: { type: 'json', description: 'Cost information' },
+    selectedPath: { type: 'json', description: 'Selected routing path' },
+    selectedRoute: { type: 'string', description: 'Selected route ID' },
+  },
+}
+
+/**
+ * Router V2 Block (port-based routing).
+ * Uses route definitions with descriptions instead of downstream block names.
+ */
+interface RouterV2Response extends ToolResponse {
+  output: {
+    context: string
+    model: string
+    tokens?: {
+      prompt?: number
+      completion?: number
+      total?: number
+    }
+    cost?: {
+      input: number
+      output: number
+      total: number
+    }
+    selectedRoute: string
+    reasoning: string
+    selectedPath: {
+      blockId: string
+      blockType: string
+      blockTitle: string
+    }
+  }
+}
+
+export const RouterV2Block: BlockConfig<RouterV2Response> = {
+  type: 'router_v2',
+  name: 'Router',
+  description: 'Route workflow based on context',
+  authMode: AuthMode.ApiKey,
+  docsLink: 'https://docs.sim.ai/blocks/router',
+  longDescription:
+    'Intelligently route workflow execution to different paths based on context analysis. Define multiple routes with descriptions, and an LLM will determine which route to take based on the provided context.',
+  bestPractices: `
+  - Write clear, specific descriptions for each route
+  - The context field should contain all relevant information for routing decisions
+  - Route descriptions should be mutually exclusive when possible
+  - Use descriptive route names to make the workflow readable
+  `,
+  category: 'blocks',
+  bgColor: '#28C43F',
+  icon: ConnectIcon,
+  subBlocks: [
+    {
+      id: 'context',
+      title: 'Context',
+      type: 'long-input',
+      placeholder: 'Enter the context to analyze for routing...',
+      required: true,
+    },
+    {
+      id: 'routes',
+      type: 'router-input',
+    },
+    {
+      id: 'model',
+      title: 'Model',
+      type: 'combobox',
+      placeholder: 'Type or select a model...',
+      required: true,
+      defaultValue: 'claude-sonnet-4-5',
+      options: getModelOptions,
+    },
+    ...getProviderCredentialSubBlocks(),
+  ],
+  tools: {
+    access: [
+      'openai_chat',
+      'anthropic_chat',
+      'google_chat',
+      'xai_chat',
+      'deepseek_chat',
+      'deepseek_reasoner',
+    ],
+    config: {
+      tool: (params: Record<string, any>) => {
+        const model = params.model || 'gpt-4o'
+        if (!model) {
+          throw new Error('No model selected')
+        }
+        const tool = getBaseModelProviders()[model as ProviderId]
+        if (!tool) {
+          throw new Error(`Invalid model selected: ${model}`)
+        }
+        return tool
+      },
+    },
+  },
+  inputs: {
+    context: { type: 'string', description: 'Context for routing decision' },
+    routes: { type: 'json', description: 'Route definitions with descriptions' },
+    model: { type: 'string', description: 'AI model to use' },
+    ...PROVIDER_CREDENTIAL_INPUTS,
+  },
+  outputs: {
+    context: { type: 'string', description: 'Context used for routing' },
+    model: { type: 'string', description: 'Model used' },
+    tokens: { type: 'json', description: 'Token usage' },
+    cost: { type: 'json', description: 'Cost information' },
+    selectedRoute: { type: 'string', description: 'Selected route ID' },
+    reasoning: { type: 'string', description: 'Explanation of why this route was chosen' },
     selectedPath: { type: 'json', description: 'Selected routing path' },
   },
 }

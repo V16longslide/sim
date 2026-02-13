@@ -17,13 +17,13 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'operation',
       title: 'Operation',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'Query (SELECT)', id: 'query' },
         { label: 'Insert Data', id: 'insert' },
         { label: 'Update Data', id: 'update' },
         { label: 'Delete Data', id: 'delete' },
         { label: 'Execute Raw SQL', id: 'execute' },
+        { label: 'Introspect Schema', id: 'introspect' },
       ],
       value: () => 'query',
     },
@@ -31,7 +31,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'host',
       title: 'Host',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'localhost or your.database.host',
       required: true,
     },
@@ -39,7 +38,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'port',
       title: 'Port',
       type: 'short-input',
-      layout: 'full',
       placeholder: '5432',
       value: () => '5432',
       required: true,
@@ -48,7 +46,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'database',
       title: 'Database Name',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'your_database',
       required: true,
     },
@@ -56,7 +53,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'username',
       title: 'Username',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'postgres',
       required: true,
     },
@@ -64,7 +60,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'password',
       title: 'Password',
       type: 'short-input',
-      layout: 'full',
       password: true,
       placeholder: 'Your database password',
       required: true,
@@ -73,7 +68,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'ssl',
       title: 'SSL Mode',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'Disabled', id: 'disabled' },
         { label: 'Required', id: 'required' },
@@ -86,7 +80,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'table',
       title: 'Table Name',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'users',
       condition: { field: 'operation', value: 'insert' },
       required: true,
@@ -95,7 +88,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'table',
       title: 'Table Name',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'users',
       condition: { field: 'operation', value: 'update' },
       required: true,
@@ -104,7 +96,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'table',
       title: 'Table Name',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'users',
       condition: { field: 'operation', value: 'delete' },
       required: true,
@@ -114,7 +105,6 @@ export const PostgreSQLBlock: BlockConfig<PostgresResponse> = {
       id: 'query',
       title: 'SQL Query',
       type: 'code',
-      layout: 'full',
       placeholder: 'SELECT * FROM users WHERE active = true',
       condition: { field: 'operation', value: 'query' },
       required: true,
@@ -190,7 +180,6 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       id: 'query',
       title: 'SQL Query',
       type: 'code',
-      layout: 'full',
       placeholder: 'SELECT * FROM table_name',
       condition: { field: 'operation', value: 'execute' },
       required: true,
@@ -267,7 +256,6 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       id: 'data',
       title: 'Data (JSON)',
       type: 'code',
-      layout: 'full',
       placeholder: '{\n  "name": "John Doe",\n  "email": "john@example.com",\n  "active": true\n}',
       condition: { field: 'operation', value: 'insert' },
       required: true,
@@ -277,7 +265,6 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       id: 'data',
       title: 'Update Data (JSON)',
       type: 'code',
-      layout: 'full',
       placeholder: '{\n  "name": "Jane Doe",\n  "email": "jane@example.com"\n}',
       condition: { field: 'operation', value: 'update' },
       required: true,
@@ -287,7 +274,6 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       id: 'where',
       title: 'WHERE Condition',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'id = 1',
       condition: { field: 'operation', value: 'update' },
       required: true,
@@ -296,10 +282,17 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       id: 'where',
       title: 'WHERE Condition',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'id = 1',
       condition: { field: 'operation', value: 'delete' },
       required: true,
+    },
+    {
+      id: 'schema',
+      title: 'Schema Name',
+      type: 'short-input',
+      placeholder: 'public',
+      value: () => 'public',
+      condition: { field: 'operation', value: 'introspect' },
     },
   ],
   tools: {
@@ -309,6 +302,7 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
       'postgresql_update',
       'postgresql_delete',
       'postgresql_execute',
+      'postgresql_introspect',
     ],
     config: {
       tool: (params) => {
@@ -323,6 +317,8 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
             return 'postgresql_delete'
           case 'execute':
             return 'postgresql_execute'
+          case 'introspect':
+            return 'postgresql_introspect'
           default:
             throw new Error(`Invalid PostgreSQL operation: ${params.operation}`)
         }
@@ -359,6 +355,7 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
         if (rest.table) result.table = rest.table
         if (rest.query) result.query = rest.query
         if (rest.where) result.where = rest.where
+        if (rest.schema) result.schema = rest.schema
         if (parsedData !== undefined) result.data = parsedData
 
         return result
@@ -377,6 +374,7 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
     query: { type: 'string', description: 'SQL query to execute' },
     data: { type: 'json', description: 'Data for insert/update operations' },
     where: { type: 'string', description: 'WHERE clause for update/delete' },
+    schema: { type: 'string', description: 'Schema name for introspection' },
   },
   outputs: {
     message: {
@@ -390,6 +388,14 @@ Return ONLY the SQL query - no explanations, no markdown, no extra text.`,
     rowCount: {
       type: 'number',
       description: 'Number of rows affected by the operation',
+    },
+    tables: {
+      type: 'array',
+      description: 'Array of table schemas with columns, keys, and indexes (introspect operation)',
+    },
+    schemas: {
+      type: 'array',
+      description: 'List of available schemas in the database (introspect operation)',
     },
   },
 }

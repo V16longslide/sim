@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getSession } from '@/lib/auth'
-import { env } from '@/lib/env'
-import { createLogger } from '@/lib/logs/console/logger'
-import { SIM_AGENT_API_URL_DEFAULT } from '@/lib/sim-agent'
+import { SIM_AGENT_API_URL } from '@/lib/copilot/constants'
+import { env } from '@/lib/core/config/env'
 
-const logger = createLogger('CopilotApiKeysGenerate')
-
-const SIM_AGENT_API_URL = env.SIM_AGENT_API_URL || SIM_AGENT_API_URL_DEFAULT
+const GenerateApiKeySchema = z.object({
+  name: z.string().min(1, 'Name is required').max(255, 'Name is too long'),
+})
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,37 +17,48 @@ export async function POST(req: NextRequest) {
 
     const userId = session.user.id
 
+    const body = await req.json().catch(() => ({}))
+    const validationResult = GenerateApiKeySchema.safeParse(body)
+
+    if (!validationResult.success) {
+      return NextResponse.json(
+        {
+          error: 'Invalid request body',
+          details: validationResult.error.errors,
+        },
+        { status: 400 }
+      )
+    }
+
+    const { name } = validationResult.data
+
     const res = await fetch(`${SIM_AGENT_API_URL}/api/validate-key/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(env.COPILOT_API_KEY ? { 'x-api-key': env.COPILOT_API_KEY } : {}),
       },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, name }),
     })
 
     if (!res.ok) {
-      const errorBody = await res.text().catch(() => '')
-      logger.error('Sim Agent generate key error', { status: res.status, error: errorBody })
       return NextResponse.json(
         { error: 'Failed to generate copilot API key' },
         { status: res.status || 500 }
       )
     }
 
-    const data = (await res.json().catch(() => null)) as { apiKey?: string } | null
+    const data = (await res.json().catch(() => null)) as { apiKey?: string; id?: string } | null
 
     if (!data?.apiKey) {
-      logger.error('Sim Agent generate key returned invalid payload')
       return NextResponse.json({ error: 'Invalid response from Sim Agent' }, { status: 500 })
     }
 
     return NextResponse.json(
-      { success: true, key: { id: 'new', apiKey: data.apiKey } },
+      { success: true, key: { id: data?.id || 'new', apiKey: data.apiKey } },
       { status: 201 }
     )
   } catch (error) {
-    logger.error('Failed to proxy generate copilot API key', { error })
     return NextResponse.json({ error: 'Failed to generate copilot API key' }, { status: 500 })
   }
 }

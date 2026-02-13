@@ -1,5 +1,5 @@
-import { createLogger } from '@/lib/logs/console/logger'
-import { getBaseUrl } from '@/lib/urls/utils'
+import { createLogger } from '@sim/logger'
+import { getBaseUrl } from '@/lib/core/utils/urls'
 import type { BaseImageRequestBody } from '@/tools/openai/types'
 import type { ToolConfig } from '@/tools/types'
 
@@ -74,10 +74,9 @@ export const imageTool: ToolConfig = {
         model: params.model,
         prompt: params.prompt,
         size: params.size || '1024x1024',
-        n: params.n || 1,
+        n: params.n ? Number(params.n) : 1,
       }
 
-      // Add model-specific parameters
       if (params.model === 'dall-e-3') {
         if (params.quality) body.quality = params.quality
         if (params.style) body.style = params.style
@@ -124,13 +123,26 @@ export const imageTool: ToolConfig = {
         try {
           logger.info('Fetching image from URL via proxy...')
           const baseUrl = getBaseUrl()
-          const proxyUrl = new URL('/api/proxy/image', baseUrl)
+          const proxyUrl = new URL('/api/tools/image', baseUrl)
           proxyUrl.searchParams.append('url', imageUrl)
 
+          const headers: Record<string, string> = {
+            Accept: 'image/*, */*',
+          }
+
+          if (typeof window === 'undefined') {
+            const { generateInternalToken } = await import('@/lib/auth/internal')
+            try {
+              const token = await generateInternalToken()
+              headers.Authorization = `Bearer ${token}`
+              logger.info('Added internal auth token for image proxy request')
+            } catch (error) {
+              logger.error('Failed to generate internal token for image proxy:', error)
+            }
+          }
+
           const imageResponse = await fetch(proxyUrl.toString(), {
-            headers: {
-              Accept: 'image/*, */*',
-            },
+            headers,
             cache: 'no-store',
           })
 
@@ -151,37 +163,6 @@ export const imageTool: ToolConfig = {
           base64Image = buffer.toString('base64')
         } catch (error) {
           logger.error('Error fetching or processing image:', error)
-
-          try {
-            logger.info('Attempting fallback with direct browser fetch...')
-            const directImageResponse = await fetch(imageUrl, {
-              cache: 'no-store',
-              headers: {
-                Accept: 'image/*, */*',
-                'User-Agent': 'Mozilla/5.0 (compatible DalleProxy/1.0)',
-              },
-            })
-
-            if (!directImageResponse.ok) {
-              throw new Error(`Direct fetch failed: ${directImageResponse.status}`)
-            }
-
-            const imageBlob = await directImageResponse.blob()
-            if (imageBlob.size === 0) {
-              throw new Error('Empty blob received from direct fetch')
-            }
-
-            const arrayBuffer = await imageBlob.arrayBuffer()
-            const buffer = Buffer.from(arrayBuffer)
-            base64Image = buffer.toString('base64')
-
-            logger.info(
-              'Successfully converted image to base64 via direct fetch, length:',
-              base64Image.length
-            )
-          } catch (fallbackError) {
-            logger.error('Fallback fetch also failed:', fallbackError)
-          }
         }
       }
 

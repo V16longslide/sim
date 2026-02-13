@@ -1,5 +1,6 @@
 import type { RequestParams, RequestResponse } from '@/tools/http/types'
-import { getDefaultHeaders, processUrl, transformTable } from '@/tools/http/utils'
+import { getDefaultHeaders, processUrl } from '@/tools/http/utils'
+import { transformTable } from '@/tools/shared/table'
 import type { ToolConfig } from '@/tools/types'
 
 export const requestTool: ToolConfig<RequestParams, RequestResponse> = {
@@ -13,41 +14,44 @@ export const requestTool: ToolConfig<RequestParams, RequestResponse> = {
     url: {
       type: 'string',
       required: true,
+      visibility: 'user-or-llm',
       description: 'The URL to send the request to',
     },
     method: {
       type: 'string',
       default: 'GET',
+      visibility: 'user-or-llm',
       description: 'HTTP method (GET, POST, PUT, PATCH, DELETE)',
     },
     headers: {
       type: 'object',
+      visibility: 'user-or-llm',
       description: 'HTTP headers to include',
     },
     body: {
       type: 'object',
+      visibility: 'user-or-llm',
       description: 'Request body (for POST, PUT, PATCH)',
     },
     params: {
       type: 'object',
+      visibility: 'user-or-llm',
       description: 'URL query parameters to append',
     },
     pathParams: {
       type: 'object',
+      visibility: 'user-or-llm',
       description: 'URL path parameters to replace (e.g., :id in /users/:id)',
     },
     formData: {
       type: 'object',
+      visibility: 'user-or-llm',
       description: 'Form data to send (will set appropriate Content-Type)',
     },
     timeout: {
       type: 'number',
-      default: 10000,
-      description: 'Request timeout in milliseconds',
-    },
-    validateStatus: {
-      type: 'object',
-      description: 'Custom status validation function',
+      visibility: 'user-only',
+      description: 'Request timeout in milliseconds (default: 300000 = 5 minutes)',
     },
   },
 
@@ -79,7 +83,7 @@ export const requestTool: ToolConfig<RequestParams, RequestResponse> = {
       return allHeaders
     },
 
-    body: (params: RequestParams) => {
+    body: ((params: RequestParams) => {
       if (params.formData) {
         const formData = new FormData()
         Object.entries(params.formData).forEach(([key, value]) => {
@@ -99,19 +103,22 @@ export const requestTool: ToolConfig<RequestParams, RequestResponse> = {
         ) {
           // Convert JSON object to URL-encoded string
           const urlencoded = new URLSearchParams()
-          Object.entries(params.body).forEach(([key, value]) => {
+          Object.entries(params.body as Record<string, unknown>).forEach(([key, value]) => {
             if (value !== undefined && value !== null) {
-              urlencoded.append(key, String(value))
+              urlencoded.append(
+                key,
+                typeof value === 'object' ? JSON.stringify(value) : String(value)
+              )
             }
           })
           return urlencoded.toString()
         }
 
-        return params.body
+        return params.body as Record<string, any>
       }
 
       return undefined
-    },
+    }) as (params: RequestParams) => Record<string, any> | string | FormData | undefined,
   },
 
   transformResponse: async (response: Response) => {

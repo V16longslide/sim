@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type { GoogleDocsCreateResponse, GoogleDocsToolParams } from '@/tools/google_docs/types'
 import type { ToolConfig } from '@/tools/types'
 
@@ -13,7 +13,6 @@ export const createTool: ToolConfig<GoogleDocsToolParams, GoogleDocsCreateRespon
   oauth: {
     required: true,
     provider: 'google-docs',
-    additionalScopes: ['https://www.googleapis.com/auth/drive.file'],
   },
 
   params: {
@@ -38,8 +37,8 @@ export const createTool: ToolConfig<GoogleDocsToolParams, GoogleDocsCreateRespon
     folderSelector: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'Select the folder to create the document in',
+      visibility: 'user-or-llm',
+      description: 'Google Drive folder ID to create the document in (e.g., 1ABCxyz...)',
     },
     folderId: {
       type: 'string',
@@ -51,7 +50,7 @@ export const createTool: ToolConfig<GoogleDocsToolParams, GoogleDocsCreateRespon
 
   request: {
     url: () => {
-      return 'https://www.googleapis.com/drive/v3/files'
+      return 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true'
     },
     method: 'POST',
     headers: (params) => {
@@ -151,6 +150,12 @@ export const createTool: ToolConfig<GoogleDocsToolParams, GoogleDocsCreateRespon
     metadata: {
       type: 'json',
       description: 'Created document metadata including ID, title, and URL',
+      properties: {
+        documentId: { type: 'string', description: 'Google Docs document ID' },
+        title: { type: 'string', description: 'Document title' },
+        mimeType: { type: 'string', description: 'Document MIME type' },
+        url: { type: 'string', description: 'Document URL' },
+      },
     },
   },
 }

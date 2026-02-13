@@ -1,11 +1,12 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
 import { checkHybridAuth } from '@/lib/auth/hybrid'
 import { checkServerSideUsageLimits } from '@/lib/billing'
 import { getHighestPrioritySubscription } from '@/lib/billing/core/subscription'
 import { getEffectiveCurrentPeriodCost } from '@/lib/billing/core/usage'
-import { createLogger } from '@/lib/logs/console/logger'
+import { getUserStorageLimit, getUserStorageUsage } from '@/lib/billing/storage'
+import { RateLimiter } from '@/lib/core/rate-limiter'
 import { createErrorResponse } from '@/app/api/workflows/utils'
-import { RateLimiter } from '@/services/queue'
 
 const logger = createLogger('UsageLimitsAPI')
 
@@ -17,7 +18,6 @@ export async function GET(request: NextRequest) {
     }
     const authenticatedUserId = auth.userId
 
-    // Rate limit info (sync + async), mirroring /users/me/rate-limit
     const userSubscription = await getHighestPrioritySubscription(authenticatedUserId)
     const rateLimiter = new RateLimiter()
     const triggerType = auth.authType === 'api_key' ? 'api' : 'manual'
@@ -36,10 +36,11 @@ export async function GET(request: NextRequest) {
       ),
     ])
 
-    // Usage summary (current period cost + limit + plan)
-    const [usageCheck, effectiveCost] = await Promise.all([
+    const [usageCheck, effectiveCost, storageUsage, storageLimit] = await Promise.all([
       checkServerSideUsageLimits(authenticatedUserId),
       getEffectiveCurrentPeriodCost(authenticatedUserId),
+      getUserStorageUsage(authenticatedUserId),
+      getUserStorageLimit(authenticatedUserId),
     ])
 
     const currentPeriodCost = effectiveCost
@@ -49,13 +50,15 @@ export async function GET(request: NextRequest) {
       rateLimit: {
         sync: {
           isLimited: syncStatus.remaining === 0,
-          limit: syncStatus.limit,
+          requestsPerMinute: syncStatus.requestsPerMinute,
+          maxBurst: syncStatus.maxBurst,
           remaining: syncStatus.remaining,
           resetAt: syncStatus.resetAt,
         },
         async: {
           isLimited: asyncStatus.remaining === 0,
-          limit: asyncStatus.limit,
+          requestsPerMinute: asyncStatus.requestsPerMinute,
+          maxBurst: asyncStatus.maxBurst,
           remaining: asyncStatus.remaining,
           resetAt: asyncStatus.resetAt,
         },
@@ -65,6 +68,11 @@ export async function GET(request: NextRequest) {
         currentPeriodCost,
         limit: usageCheck.limit,
         plan: userSubscription?.plan || 'free',
+      },
+      storage: {
+        usedBytes: storageUsage,
+        limitBytes: storageLimit,
+        percentUsed: storageLimit > 0 ? (storageUsage / storageLimit) * 100 : 0,
       },
     })
   } catch (error: any) {

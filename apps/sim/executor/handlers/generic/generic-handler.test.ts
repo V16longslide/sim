@@ -1,7 +1,7 @@
-import '@/executor/__test-utils__/mock-dependencies'
+import '@sim/testing/mocks/executor'
 
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
-import { BlockType } from '@/executor/consts'
+import { BlockType } from '@/executor/constants'
 import { GenericBlockHandler } from '@/executor/handlers/generic/generic-handler'
 import type { ExecutionContext } from '@/executor/types'
 import type { SerializedBlock } from '@/serializer/types'
@@ -38,8 +38,7 @@ describe('GenericBlockHandler', () => {
       metadata: { duration: 0 },
       environmentVariables: {},
       decisions: { router: new Map(), condition: new Map() },
-      loopIterations: new Map(),
-      loopItems: new Map(),
+      loopExecutions: new Map(),
       executedBlocks: new Set(),
       activeExecutionPath: new Set(),
       completedLoops: new Set(),
@@ -90,13 +89,12 @@ describe('GenericBlockHandler', () => {
     }
     const expectedOutput: any = { customResult: 'OK' }
 
-    const result = await handler.execute(mockBlock, inputs, mockContext)
+    const result = await handler.execute(mockContext, mockBlock, inputs)
 
     expect(mockGetTool).toHaveBeenCalledWith('some_custom_tool')
     expect(mockExecuteTool).toHaveBeenCalledWith(
       'some_custom_tool',
       expectedToolParams,
-      false, // skipProxy
       false, // skipPostProcess
       mockContext // execution context
     )
@@ -109,7 +107,7 @@ describe('GenericBlockHandler', () => {
     // Override mock to return undefined for this test
     mockGetTool.mockImplementation(() => undefined)
 
-    await expect(handler.execute(mockBlock, inputs, mockContext)).rejects.toThrow(
+    await expect(handler.execute(mockContext, mockBlock, inputs)).rejects.toThrow(
       'Tool not found: some_custom_tool'
     )
     expect(mockExecuteTool).not.toHaveBeenCalled()
@@ -124,13 +122,13 @@ describe('GenericBlockHandler', () => {
     }
     mockExecuteTool.mockResolvedValue(errorResult)
 
-    await expect(handler.execute(mockBlock, inputs, mockContext)).rejects.toThrow(
+    await expect(handler.execute(mockContext, mockBlock, inputs)).rejects.toThrow(
       'Custom tool failed'
     )
 
     // Re-execute to check error properties after catching
     try {
-      await handler.execute(mockBlock, inputs, mockContext)
+      await handler.execute(mockContext, mockBlock, inputs)
     } catch (e: any) {
       expect(e.toolId).toBe('some_custom_tool')
       expect(e.blockName).toBe('Test Generic Block')
@@ -145,7 +143,7 @@ describe('GenericBlockHandler', () => {
     const errorResult = { success: false, output: {} }
     mockExecuteTool.mockResolvedValue(errorResult)
 
-    await expect(handler.execute(mockBlock, inputs, mockContext)).rejects.toThrow(
+    await expect(handler.execute(mockContext, mockBlock, inputs)).rejects.toThrow(
       'Block execution of Some Custom Tool failed with no error message'
     )
   })
@@ -187,8 +185,8 @@ describe('GenericBlockHandler', () => {
               output: 0,
               total: 0.00001042,
               tokens: {
-                prompt: 521,
-                completion: 0,
+                input: 521,
+                output: 0,
                 total: 521,
               },
               model: 'text-embedding-3-small',
@@ -203,7 +201,7 @@ describe('GenericBlockHandler', () => {
 
         mockExecuteTool.mockResolvedValue(mockToolResponse)
 
-        const result = await handler.execute(mockBlock, inputs, mockContext)
+        const result = await handler.execute(mockContext, mockBlock, inputs)
 
         // Verify cost information is restructured correctly for enhanced logging
         expect(result).toEqual({
@@ -216,8 +214,8 @@ describe('GenericBlockHandler', () => {
             total: 0.00001042,
           },
           tokens: {
-            prompt: 521,
-            completion: 0,
+            input: 521,
+            output: 0,
             total: 521,
           },
           model: 'text-embedding-3-small',
@@ -254,8 +252,8 @@ describe('GenericBlockHandler', () => {
             output: 0,
             total: 0.00000521,
             tokens: {
-              prompt: 260,
-              completion: 0,
+              input: 260,
+              output: 0,
               total: 260,
             },
             model: 'text-embedding-3-small',
@@ -270,7 +268,7 @@ describe('GenericBlockHandler', () => {
 
       mockExecuteTool.mockResolvedValue(mockToolResponse)
 
-      const result = await handler.execute(mockBlock, inputs, mockContext)
+      const result = await handler.execute(mockContext, mockBlock, inputs)
 
       // Verify cost information is restructured correctly
       expect(result).toEqual({
@@ -287,8 +285,8 @@ describe('GenericBlockHandler', () => {
           total: 0.00000521,
         },
         tokens: {
-          prompt: 260,
-          completion: 0,
+          input: 260,
+          output: 0,
           total: 260,
         },
         model: 'text-embedding-3-small',
@@ -309,7 +307,7 @@ describe('GenericBlockHandler', () => {
 
       mockExecuteTool.mockResolvedValue(mockToolResponse)
 
-      const result = await handler.execute(mockBlock, inputs, mockContext)
+      const result = await handler.execute(mockContext, mockBlock, inputs)
 
       // Should return original output without cost transformation
       expect(result).toEqual({
@@ -319,48 +317,49 @@ describe('GenericBlockHandler', () => {
       })
     })
 
-    it.concurrent('should not process cost info for non-knowledge tools', async () => {
-      // Set up non-knowledge tool
-      mockBlock.config.tool = 'some_other_tool'
-      mockTool.id = 'some_other_tool'
+    it.concurrent(
+      'should process cost info for all tools (universal cost extraction)',
+      async () => {
+        mockBlock.config.tool = 'some_other_tool'
+        mockTool.id = 'some_other_tool'
 
-      mockGetTool.mockImplementation((toolId) => {
-        if (toolId === 'some_other_tool') {
-          return mockTool
+        mockGetTool.mockImplementation((toolId) => {
+          if (toolId === 'some_other_tool') {
+            return mockTool
+          }
+          return undefined
+        })
+
+        const inputs = { param: 'value' }
+        const mockToolResponse = {
+          success: true,
+          output: {
+            result: 'success',
+            cost: {
+              input: 0.001,
+              output: 0.002,
+              total: 0.003,
+              tokens: { input: 100, output: 50, total: 150 },
+              model: 'some-model',
+            },
+          },
         }
-        return undefined
-      })
 
-      const inputs = { param: 'value' }
-      const mockToolResponse = {
-        success: true,
-        output: {
+        mockExecuteTool.mockResolvedValue(mockToolResponse)
+
+        const result = await handler.execute(mockContext, mockBlock, inputs)
+
+        expect(result).toEqual({
           result: 'success',
           cost: {
             input: 0.001,
             output: 0.002,
             total: 0.003,
-            tokens: { prompt: 100, completion: 50, total: 150 },
-            model: 'some-model',
           },
-        },
-      }
-
-      mockExecuteTool.mockResolvedValue(mockToolResponse)
-
-      const result = await handler.execute(mockBlock, inputs, mockContext)
-
-      // Should return original output without cost transformation
-      expect(result).toEqual({
-        result: 'success',
-        cost: {
-          input: 0.001,
-          output: 0.002,
-          total: 0.003,
-          tokens: { prompt: 100, completion: 50, total: 150 },
+          tokens: { input: 100, output: 50, total: 150 },
           model: 'some-model',
-        },
-      })
-    })
+        })
+      }
+    )
   })
 })

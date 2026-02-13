@@ -1,9 +1,14 @@
+import { db } from '@sim/db'
+import { account } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
+import { eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import { checkInternalAuth } from '@/lib/auth/hybrid'
+import { generateRequestId } from '@/lib/core/utils/request'
+import { checkWorkspaceAccess } from '@/lib/workspaces/permissions/utils'
+import { refreshTokenIfNeeded } from '@/app/api/auth/oauth/utils'
 import type { StreamingExecution } from '@/executor/types'
 import { executeProviderRequest } from '@/providers'
-import { getApiKey } from '@/providers/utils'
 
 const logger = createLogger('ProvidersAPI')
 
@@ -17,6 +22,11 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
   try {
+    const auth = await checkInternalAuth(request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     logger.info(`[${requestId}] Provider API request started`, {
       timestamp: new Date().toISOString(),
       userAgent: request.headers.get('User-Agent'),
@@ -35,6 +45,12 @@ export async function POST(request: NextRequest) {
       apiKey,
       azureEndpoint,
       azureApiVersion,
+      vertexProject,
+      vertexLocation,
+      vertexCredential,
+      bedrockAccessKeyId,
+      bedrockSecretKey,
+      bedrockRegion,
       responseFormat,
       workflowId,
       workspaceId,
@@ -58,6 +74,12 @@ export async function POST(request: NextRequest) {
       hasApiKey: !!apiKey,
       hasAzureEndpoint: !!azureEndpoint,
       hasAzureApiVersion: !!azureApiVersion,
+      hasVertexProject: !!vertexProject,
+      hasVertexLocation: !!vertexLocation,
+      hasVertexCredential: !!vertexCredential,
+      hasBedrockAccessKeyId: !!bedrockAccessKeyId,
+      hasBedrockSecretKey: !!bedrockSecretKey,
+      hasBedrockRegion: !!bedrockRegion,
       hasResponseFormat: !!responseFormat,
       workflowId,
       stream: !!stream,
@@ -70,18 +92,27 @@ export async function POST(request: NextRequest) {
       verbosity,
     })
 
-    let finalApiKey: string
+    if (workspaceId) {
+      const workspaceAccess = await checkWorkspaceAccess(workspaceId, auth.userId)
+      if (!workspaceAccess.hasAccess) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+
+    let finalApiKey: string | undefined = apiKey
     try {
-      finalApiKey = getApiKey(provider, model, apiKey)
+      if (provider === 'vertex' && vertexCredential) {
+        finalApiKey = await resolveVertexCredential(requestId, vertexCredential)
+      }
     } catch (error) {
-      logger.error(`[${requestId}] Failed to get API key:`, {
+      logger.error(`[${requestId}] Failed to resolve Vertex credential:`, {
         provider,
         model,
         error: error instanceof Error ? error.message : String(error),
-        hasProvidedApiKey: !!apiKey,
+        hasVertexCredential: !!vertexCredential,
       })
       return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'API key error' },
+        { error: error instanceof Error ? error.message : 'Credential error' },
         { status: 400 }
       )
     }
@@ -93,7 +124,6 @@ export async function POST(request: NextRequest) {
       hasApiKey: !!finalApiKey,
     })
 
-    // Execute provider request directly with the managed key
     const response = await executeProviderRequest(provider, {
       model,
       systemPrompt,
@@ -104,6 +134,11 @@ export async function POST(request: NextRequest) {
       apiKey: finalApiKey,
       azureEndpoint,
       azureApiVersion,
+      vertexProject,
+      vertexLocation,
+      bedrockAccessKeyId,
+      bedrockSecretKey,
+      bedrockRegion,
       responseFormat,
       workflowId,
       workspaceId,
@@ -159,8 +194,8 @@ export async function POST(request: NextRequest) {
               : '',
             model: executionData.output?.model,
             tokens: executionData.output?.tokens || {
-              prompt: 0,
-              completion: 0,
+              input: 0,
+              output: 0,
               total: 0,
             },
             // Sanitize any potential Unicode characters in tool calls
@@ -317,4 +352,28 @@ function sanitizeObject(obj: any): any {
   }
 
   return result
+}
+
+/**
+ * Resolves a Vertex AI OAuth credential to an access token
+ */
+async function resolveVertexCredential(requestId: string, credentialId: string): Promise<string> {
+  logger.info(`[${requestId}] Resolving Vertex AI credential: ${credentialId}`)
+
+  const credential = await db.query.account.findFirst({
+    where: eq(account.id, credentialId),
+  })
+
+  if (!credential) {
+    throw new Error(`Vertex AI credential not found: ${credentialId}`)
+  }
+
+  const { accessToken } = await refreshTokenIfNeeded(requestId, credential, credentialId)
+
+  if (!accessToken) {
+    throw new Error('Failed to get Vertex AI access token')
+  }
+
+  logger.info(`[${requestId}] Successfully resolved Vertex AI credential`)
+  return accessToken
 }

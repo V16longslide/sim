@@ -1,8 +1,6 @@
 import type { GmailSendParams, GmailToolResponse } from '@/tools/gmail/types'
 import type { ToolConfig } from '@/tools/types'
 
-const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
-
 export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
   id: 'gmail_draft',
   name: 'Gmail Draft',
@@ -12,7 +10,6 @@ export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
   oauth: {
     required: true,
     provider: 'google-email',
-    additionalScopes: [],
   },
 
   params: {
@@ -30,7 +27,7 @@ export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
     },
     subject: {
       type: 'string',
-      required: true,
+      required: false,
       visibility: 'user-or-llm',
       description: 'Email subject',
     },
@@ -39,6 +36,25 @@ export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
       required: true,
       visibility: 'user-or-llm',
       description: 'Email body content',
+    },
+    contentType: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Content type for the email body (text or html)',
+    },
+    threadId: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description: 'Thread ID to reply to (for threading)',
+    },
+    replyToMessageId: {
+      type: 'string',
+      required: false,
+      visibility: 'user-or-llm',
+      description:
+        'Gmail message ID to reply to - use the "id" field from Gmail Read results (not the RFC "messageId")',
     },
     cc: {
       type: 'string',
@@ -52,55 +68,53 @@ export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
       visibility: 'user-or-llm',
       description: 'BCC recipients (comma-separated)',
     },
+    attachments: {
+      type: 'file[]',
+      required: false,
+      visibility: 'user-only',
+      description: 'Files to attach to the email draft',
+    },
   },
 
   request: {
-    url: () => `${GMAIL_API_BASE}/drafts`,
+    url: '/api/tools/gmail/draft',
     method: 'POST',
-    headers: (params: GmailSendParams) => ({
-      Authorization: `Bearer ${params.accessToken}`,
+    headers: () => ({
       'Content-Type': 'application/json',
     }),
-    body: (params: GmailSendParams): Record<string, any> => {
-      const emailHeaders = [
-        'Content-Type: text/plain; charset="UTF-8"',
-        'MIME-Version: 1.0',
-        `To: ${params.to}`,
-      ]
-
-      if (params.cc) {
-        emailHeaders.push(`Cc: ${params.cc}`)
-      }
-      if (params.bcc) {
-        emailHeaders.push(`Bcc: ${params.bcc}`)
-      }
-
-      emailHeaders.push(`Subject: ${params.subject}`, '', params.body)
-      const email = emailHeaders.join('\n')
-
-      return {
-        message: {
-          raw: Buffer.from(email).toString('base64url'),
-        },
-      }
-    },
+    body: (params: GmailSendParams) => ({
+      accessToken: params.accessToken,
+      to: params.to,
+      subject: params.subject,
+      body: params.body,
+      contentType: params.contentType || 'text',
+      threadId: params.threadId,
+      replyToMessageId: params.replyToMessageId,
+      cc: params.cc,
+      bcc: params.bcc,
+      attachments: params.attachments,
+    }),
   },
 
   transformResponse: async (response) => {
     const data = await response.json()
 
+    if (!data.success) {
+      return {
+        success: false,
+        output: {
+          content: data.error || 'Failed to create draft',
+          metadata: {},
+        },
+        error: data.error,
+      }
+    }
+
     return {
       success: true,
       output: {
-        content: 'Email drafted successfully',
-        metadata: {
-          id: data.id,
-          message: {
-            id: data.message?.id,
-            threadId: data.message?.threadId,
-            labelIds: data.message?.labelIds,
-          },
-        },
+        content: data.output.content,
+        metadata: data.output.metadata,
       },
     }
   },
@@ -122,6 +136,51 @@ export const gmailDraftTool: ToolConfig<GmailSendParams, GmailToolResponse> = {
           },
         },
       },
+    },
+  },
+}
+
+interface GmailDraftV2Response {
+  success: boolean
+  output: {
+    draftId?: string
+    messageId?: string
+    threadId?: string
+    labelIds?: string[]
+  }
+}
+
+export const gmailDraftV2Tool: ToolConfig<GmailSendParams, GmailDraftV2Response> = {
+  id: 'gmail_draft_v2',
+  name: 'Gmail Draft',
+  description: 'Draft emails using Gmail. Returns API-aligned fields only.',
+  version: '2.0.0',
+  oauth: gmailDraftTool.oauth,
+  params: gmailDraftTool.params,
+  request: gmailDraftTool.request,
+  transformResponse: async (response) => {
+    const legacy = await gmailDraftTool.transformResponse!(response)
+    if (!legacy.success) return { success: false, output: {}, error: legacy.error }
+    const metadata = legacy.output.metadata as any
+    return {
+      success: true,
+      output: {
+        draftId: metadata?.id ?? null,
+        messageId: metadata?.message?.id ?? null,
+        threadId: metadata?.message?.threadId ?? null,
+        labelIds: metadata?.message?.labelIds ?? null,
+      },
+    }
+  },
+  outputs: {
+    draftId: { type: 'string', description: 'Draft ID', optional: true },
+    messageId: { type: 'string', description: 'Gmail message ID for the draft', optional: true },
+    threadId: { type: 'string', description: 'Gmail thread ID', optional: true },
+    labelIds: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Email labels',
+      optional: true,
     },
   },
 }

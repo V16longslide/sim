@@ -1,17 +1,26 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getSession } from '@/lib/auth'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { PlatformEvents } from '@/lib/core/telemetry'
+import { generateRequestId } from '@/lib/core/utils/request'
 import {
   deleteKnowledgeBase,
   getKnowledgeBaseById,
   updateKnowledgeBase,
 } from '@/lib/knowledge/service'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
 import { checkKnowledgeBaseAccess, checkKnowledgeBaseWriteAccess } from '@/app/api/knowledge/utils'
 
 const logger = createLogger('KnowledgeBaseByIdAPI')
 
+/**
+ * Schema for updating a knowledge base
+ *
+ * Chunking config units:
+ * - maxSize: tokens (1 token ≈ 4 characters)
+ * - minSize: characters
+ * - overlap: tokens (1 token ≈ 4 characters)
+ */
 const UpdateKnowledgeBaseSchema = z.object({
   name: z.string().min(1, 'Name is required').optional(),
   description: z.string().optional(),
@@ -20,25 +29,39 @@ const UpdateKnowledgeBaseSchema = z.object({
   workspaceId: z.string().nullable().optional(),
   chunkingConfig: z
     .object({
-      maxSize: z.number(),
-      minSize: z.number(),
-      overlap: z.number(),
+      /** Maximum chunk size in tokens (1 token ≈ 4 characters) */
+      maxSize: z.number().min(100).max(4000),
+      /** Minimum chunk size in characters */
+      minSize: z.number().min(1).max(2000),
+      /** Overlap between chunks in characters */
+      overlap: z.number().min(0).max(500),
     })
+    .refine(
+      (data) => {
+        // Convert maxSize from tokens to characters for comparison (1 token ≈ 4 chars)
+        const maxSizeInChars = data.maxSize * 4
+        return data.minSize < maxSizeInChars
+      },
+      {
+        message: 'Min chunk size (characters) must be less than max chunk size (tokens × 4)',
+      }
+    )
     .optional(),
 })
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const requestId = generateRequestId()
   const { id } = await params
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(_request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized knowledge base access attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const accessCheck = await checkKnowledgeBaseAccess(id, session.user.id)
+    const accessCheck = await checkKnowledgeBaseAccess(id, userId)
 
     if (!accessCheck.hasAccess) {
       if ('notFound' in accessCheck && accessCheck.notFound) {
@@ -46,7 +69,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         return NextResponse.json({ error: 'Knowledge base not found' }, { status: 404 })
       }
       logger.warn(
-        `[${requestId}] User ${session.user.id} attempted to access unauthorized knowledge base ${id}`
+        `[${requestId}] User ${userId} attempted to access unauthorized knowledge base ${id}`
       )
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -57,7 +80,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Knowledge base not found' }, { status: 404 })
     }
 
-    logger.info(`[${requestId}] Retrieved knowledge base: ${id} for user ${session.user.id}`)
+    logger.info(`[${requestId}] Retrieved knowledge base: ${id} for user ${userId}`)
 
     return NextResponse.json({
       success: true,
@@ -74,13 +97,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(req, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized knowledge base update attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const accessCheck = await checkKnowledgeBaseWriteAccess(id, session.user.id)
+    const accessCheck = await checkKnowledgeBaseWriteAccess(id, userId)
 
     if (!accessCheck.hasAccess) {
       if ('notFound' in accessCheck && accessCheck.notFound) {
@@ -88,7 +112,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         return NextResponse.json({ error: 'Knowledge base not found' }, { status: 404 })
       }
       logger.warn(
-        `[${requestId}] User ${session.user.id} attempted to update unauthorized knowledge base ${id}`
+        `[${requestId}] User ${userId} attempted to update unauthorized knowledge base ${id}`
       )
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -103,12 +127,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         {
           name: validatedData.name,
           description: validatedData.description,
+          workspaceId: validatedData.workspaceId,
           chunkingConfig: validatedData.chunkingConfig,
         },
         requestId
       )
 
-      logger.info(`[${requestId}] Knowledge base updated: ${id} for user ${session.user.id}`)
+      logger.info(`[${requestId}] Knowledge base updated: ${id} for user ${userId}`)
 
       return NextResponse.json({
         success: true,
@@ -132,18 +157,22 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const requestId = generateRequestId()
   const { id } = await params
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(_request, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized knowledge base delete attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const accessCheck = await checkKnowledgeBaseWriteAccess(id, session.user.id)
+    const accessCheck = await checkKnowledgeBaseWriteAccess(id, userId)
 
     if (!accessCheck.hasAccess) {
       if ('notFound' in accessCheck && accessCheck.notFound) {
@@ -151,14 +180,22 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         return NextResponse.json({ error: 'Knowledge base not found' }, { status: 404 })
       }
       logger.warn(
-        `[${requestId}] User ${session.user.id} attempted to delete unauthorized knowledge base ${id}`
+        `[${requestId}] User ${userId} attempted to delete unauthorized knowledge base ${id}`
       )
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     await deleteKnowledgeBase(id, requestId)
 
-    logger.info(`[${requestId}] Knowledge base deleted: ${id} for user ${session.user.id}`)
+    try {
+      PlatformEvents.knowledgeBaseDeleted({
+        knowledgeBaseId: id,
+      })
+    } catch {
+      // Telemetry should not fail the operation
+    }
+
+    logger.info(`[${requestId}] Knowledge base deleted: ${id} for user ${userId}`)
 
     return NextResponse.json({
       success: true,

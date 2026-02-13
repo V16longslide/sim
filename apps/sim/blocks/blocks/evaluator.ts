@@ -1,23 +1,13 @@
+import { createLogger } from '@sim/logger'
 import { ChartBarIcon } from '@/components/icons'
-import { isHosted } from '@/lib/environment'
-import { createLogger } from '@/lib/logs/console/logger'
 import type { BlockConfig, ParamType } from '@/blocks/types'
+import { getProviderCredentialSubBlocks, PROVIDER_CREDENTIAL_INPUTS } from '@/blocks/utils'
 import type { ProviderId } from '@/providers/types'
-import {
-  getAllModelProviders,
-  getBaseModelProviders,
-  getHostedModels,
-  getProviderIcon,
-  providers,
-} from '@/providers/utils'
+import { getBaseModelProviders, getProviderIcon } from '@/providers/utils'
 import { useProvidersStore } from '@/stores/providers/store'
 import type { ToolResponse } from '@/tools/types'
 
 const logger = createLogger('EvaluatorBlock')
-
-const getCurrentOllamaModels = () => {
-  return useProvidersStore.getState().providers.ollama.models
-}
 
 interface Metric {
   name: string
@@ -169,14 +159,12 @@ export const EvaluatorBlock: BlockConfig<EvaluatorResponse> = {
       id: 'metrics',
       title: 'Evaluation Metrics',
       type: 'eval-input',
-      layout: 'full',
       required: true,
     },
     {
       id: 'content',
       title: 'Content',
-      type: 'short-input',
-      layout: 'full',
+      type: 'long-input',
       placeholder: 'Enter the content to evaluate',
       required: true,
     },
@@ -184,15 +172,18 @@ export const EvaluatorBlock: BlockConfig<EvaluatorResponse> = {
       id: 'model',
       title: 'Model',
       type: 'combobox',
-      layout: 'half',
       placeholder: 'Type or select a model...',
       required: true,
+      defaultValue: 'claude-sonnet-4-5',
       options: () => {
         const providersState = useProvidersStore.getState()
+        const baseModels = providersState.providers.base.models
         const ollamaModels = providersState.providers.ollama.models
+        const vllmModels = providersState.providers.vllm.models
         const openrouterModels = providersState.providers.openrouter.models
-        const baseModels = Object.keys(getBaseModelProviders())
-        const allModels = Array.from(new Set([...baseModels, ...ollamaModels, ...openrouterModels]))
+        const allModels = Array.from(
+          new Set([...baseModels, ...ollamaModels, ...vllmModels, ...openrouterModels])
+        )
 
         return allModels.map((model) => {
           const icon = getProviderIcon(model)
@@ -200,67 +191,19 @@ export const EvaluatorBlock: BlockConfig<EvaluatorResponse> = {
         })
       },
     },
-    {
-      id: 'apiKey',
-      title: 'API Key',
-      type: 'short-input',
-      layout: 'full',
-      placeholder: 'Enter your API key',
-      password: true,
-      connectionDroppable: false,
-      required: true,
-      condition: isHosted
-        ? {
-            field: 'model',
-            value: getHostedModels(),
-            not: true, // Show for all models EXCEPT those listed
-          }
-        : () => ({
-            field: 'model',
-            value: getCurrentOllamaModels(),
-            not: true, // Show for all models EXCEPT Ollama models
-          }),
-    },
-    {
-      id: 'azureEndpoint',
-      title: 'Azure OpenAI Endpoint',
-      type: 'short-input',
-      layout: 'full',
-      password: true,
-      placeholder: 'https://your-resource.openai.azure.com',
-      connectionDroppable: false,
-      condition: {
-        field: 'model',
-        value: providers['azure-openai'].models,
-      },
-    },
-    {
-      id: 'azureApiVersion',
-      title: 'Azure API Version',
-      type: 'short-input',
-      layout: 'full',
-      placeholder: '2024-07-01-preview',
-      connectionDroppable: false,
-      condition: {
-        field: 'model',
-        value: providers['azure-openai'].models,
-      },
-    },
+    ...getProviderCredentialSubBlocks(),
     {
       id: 'temperature',
       title: 'Temperature',
       type: 'slider',
-      layout: 'half',
       min: 0,
       max: 2,
-      value: () => '0.1',
       hidden: true,
     },
     {
       id: 'systemPrompt',
       title: 'System Prompt',
       type: 'code',
-      layout: 'full',
       hidden: true,
       value: (params: Record<string, any>) => {
         try {
@@ -317,7 +260,7 @@ export const EvaluatorBlock: BlockConfig<EvaluatorResponse> = {
         if (!model) {
           throw new Error('No model selected')
         }
-        const tool = getAllModelProviders()[model as ProviderId]
+        const tool = getBaseModelProviders()[model as ProviderId]
         if (!tool) {
           throw new Error(`Invalid model selected: ${model}`)
         }
@@ -363,9 +306,7 @@ export const EvaluatorBlock: BlockConfig<EvaluatorResponse> = {
       },
     },
     model: { type: 'string' as ParamType, description: 'AI model to use' },
-    apiKey: { type: 'string' as ParamType, description: 'Provider API key' },
-    azureEndpoint: { type: 'string' as ParamType, description: 'Azure OpenAI endpoint URL' },
-    azureApiVersion: { type: 'string' as ParamType, description: 'Azure API version' },
+    ...PROVIDER_CREDENTIAL_INPUTS,
     temperature: {
       type: 'number' as ParamType,
       description: 'Response randomness level (low for consistent evaluation)',

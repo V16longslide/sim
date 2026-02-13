@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createExecutionToolSchema,
   createLLMToolSchema,
+  createUserToolSchema,
   filterSchemaForLLM,
   formatParameterLabel,
   getToolParametersConfig,
@@ -82,13 +83,13 @@ describe('Tool Parameters Utils', () => {
   })
 
   describe('createLLMToolSchema', () => {
-    it.concurrent('should create schema excluding user-provided parameters', () => {
+    it.concurrent('should create schema excluding user-provided parameters', async () => {
       const userProvidedParams = {
         apiKey: 'user-provided-key',
         channel: '#general',
       }
 
-      const schema = createLLMToolSchema(mockToolConfig, userProvidedParams)
+      const schema = await createLLMToolSchema(mockToolConfig, userProvidedParams)
 
       expect(schema.properties).not.toHaveProperty('apiKey') // user-only, excluded
       expect(schema.properties).not.toHaveProperty('channel') // user-provided, excluded
@@ -98,8 +99,8 @@ describe('Tool Parameters Utils', () => {
       expect(schema.required).not.toContain('apiKey') // user-only, never required for LLM
     })
 
-    it.concurrent('should include all parameters when none are user-provided', () => {
-      const schema = createLLMToolSchema(mockToolConfig, {})
+    it.concurrent('should include all parameters when none are user-provided', async () => {
+      const schema = await createLLMToolSchema(mockToolConfig, {})
 
       expect(schema.properties).not.toHaveProperty('apiKey') // user-only, never shown to LLM
       expect(schema.properties).toHaveProperty('message') // user-or-llm, shown to LLM
@@ -107,6 +108,38 @@ describe('Tool Parameters Utils', () => {
       expect(schema.properties).not.toHaveProperty('timeout') // user-only, never shown to LLM
       expect(schema.required).not.toContain('apiKey') // user-only, never required for LLM
       expect(schema.required).toContain('message') // user-or-llm + required: true
+    })
+  })
+
+  describe('createUserToolSchema', () => {
+    it.concurrent('should include user-only parameters and omit hidden ones', () => {
+      const toolWithHiddenParam = {
+        ...mockToolConfig,
+        id: 'user_schema_tool',
+        params: {
+          ...mockToolConfig.params,
+          spreadsheetId: {
+            type: 'string',
+            required: true,
+            visibility: 'user-only' as ParameterVisibility,
+            description: 'Spreadsheet ID to operate on',
+          },
+          accessToken: {
+            type: 'string',
+            required: true,
+            visibility: 'hidden' as ParameterVisibility,
+            description: 'OAuth access token',
+          },
+        },
+      }
+
+      const schema = createUserToolSchema(toolWithHiddenParam)
+
+      expect(schema.properties).toHaveProperty('spreadsheetId')
+      expect(schema.required).toContain('spreadsheetId')
+      expect(schema.properties).not.toHaveProperty('accessToken')
+      expect(schema.required).not.toContain('accessToken')
+      expect(schema.properties).toHaveProperty('message')
     })
   })
 
@@ -143,6 +176,44 @@ describe('Tool Parameters Utils', () => {
       expect(merged.channel).toBe('#general')
       expect(merged.message).toBe('Hello world')
       expect(merged.timeout).toBe(10000)
+    })
+
+    it.concurrent('should skip empty strings so LLM values are used', () => {
+      const userProvided = {
+        apiKey: 'user-key',
+        channel: '', // User cleared this field
+        message: '', // User cleared this field too
+      }
+      const llmGenerated = {
+        message: 'Hello world',
+        channel: '#random',
+        timeout: 10000,
+      }
+
+      const merged = mergeToolParameters(userProvided, llmGenerated)
+
+      expect(merged.apiKey).toBe('user-key') // Non-empty user value preserved
+      expect(merged.channel).toBe('#random') // LLM value used because user value was empty
+      expect(merged.message).toBe('Hello world') // LLM value used because user value was empty
+      expect(merged.timeout).toBe(10000)
+    })
+
+    it.concurrent('should skip null and undefined values', () => {
+      const userProvided = {
+        apiKey: 'user-key',
+        channel: null,
+        message: undefined,
+      }
+      const llmGenerated = {
+        message: 'Hello world',
+        channel: '#random',
+      }
+
+      const merged = mergeToolParameters(userProvided, llmGenerated)
+
+      expect(merged.apiKey).toBe('user-key')
+      expect(merged.channel).toBe('#random') // LLM value used
+      expect(merged.message).toBe('Hello world') // LLM value used
     })
   })
 
@@ -225,15 +296,261 @@ describe('Tool Parameters Utils', () => {
     })
   })
 
+  describe('workflow_executor inputMapping handling', () => {
+    const mockWorkflowExecutorConfig = {
+      id: 'workflow_executor',
+      name: 'Workflow Executor',
+      description: 'Execute another workflow',
+      version: '1.0.0',
+      params: {
+        workflowId: {
+          type: 'string',
+          required: true,
+          visibility: 'user-or-llm' as ParameterVisibility,
+          description: 'The ID of the workflow to execute',
+        },
+        inputMapping: {
+          type: 'object',
+          required: false,
+          visibility: 'user-or-llm' as ParameterVisibility,
+          description: 'Map inputs to the selected workflow',
+        },
+      },
+      request: {
+        url: 'https://api.example.com/workflows',
+        method: 'POST' as HttpMethod,
+        headers: () => ({}),
+      },
+    }
+
+    describe('createLLMToolSchema - inputMapping always included', () => {
+      it.concurrent(
+        'should include inputMapping in schema even when user provides empty object',
+        async () => {
+          const userProvidedParams = {
+            workflowId: 'workflow-123',
+            inputMapping: '{}',
+          }
+
+          const schema = await createLLMToolSchema(mockWorkflowExecutorConfig, userProvidedParams)
+
+          expect(schema.properties).toHaveProperty('inputMapping')
+          expect(schema.properties.inputMapping.type).toBe('object')
+        }
+      )
+
+      it.concurrent(
+        'should include inputMapping in schema even when user provides object with empty values',
+        async () => {
+          const userProvidedParams = {
+            workflowId: 'workflow-123',
+            inputMapping: '{"query": "", "limit": ""}',
+          }
+
+          const schema = await createLLMToolSchema(mockWorkflowExecutorConfig, userProvidedParams)
+
+          expect(schema.properties).toHaveProperty('inputMapping')
+        }
+      )
+
+      it.concurrent(
+        'should include inputMapping when user has not provided it at all',
+        async () => {
+          const userProvidedParams = {
+            workflowId: 'workflow-123',
+          }
+
+          const schema = await createLLMToolSchema(mockWorkflowExecutorConfig, userProvidedParams)
+
+          expect(schema.properties).toHaveProperty('inputMapping')
+        }
+      )
+
+      it.concurrent('should exclude workflowId from schema when user provides it', async () => {
+        const userProvidedParams = {
+          workflowId: 'workflow-123',
+        }
+
+        const schema = await createLLMToolSchema(mockWorkflowExecutorConfig, userProvidedParams)
+
+        expect(schema.properties).not.toHaveProperty('workflowId')
+        expect(schema.properties).toHaveProperty('inputMapping')
+      })
+    })
+
+    describe('mergeToolParameters - inputMapping deep merge', () => {
+      it.concurrent('should deep merge inputMapping when user provides empty object', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: '{}',
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'search term', limit: 10 },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({ query: 'search term', limit: 10 })
+        expect(merged.workflowId).toBe('workflow-123')
+      })
+
+      it.concurrent('should deep merge inputMapping when user provides partial values', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: '{"query": "", "customField": "user-value"}',
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'llm-search', limit: 10 },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({
+          query: 'llm-search',
+          limit: 10,
+          customField: 'user-value',
+        })
+      })
+
+      it.concurrent('should preserve user inputMapping values when they are non-empty', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: '{"query": "user-search", "limit": 5}',
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'llm-search', limit: 10, extra: 'field' },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({
+          query: 'user-search',
+          limit: 5,
+          extra: 'field',
+        })
+      })
+
+      it.concurrent('should handle inputMapping as object (not JSON string)', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: { query: '', customField: 'user-value' },
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'llm-search', limit: 10 },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({
+          query: 'llm-search',
+          limit: 10,
+          customField: 'user-value',
+        })
+      })
+
+      it.concurrent('should use LLM inputMapping when user does not provide it', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'llm-search', limit: 10 },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({ query: 'llm-search', limit: 10 })
+      })
+
+      it.concurrent('should use user inputMapping when LLM does not provide it', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: '{"query": "user-search"}',
+        }
+        const llmGenerated = {}
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({ query: 'user-search' })
+      })
+
+      it.concurrent('should handle invalid JSON in user inputMapping gracefully', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: 'not valid json {',
+        }
+        const llmGenerated = {
+          inputMapping: { query: 'llm-search' },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.inputMapping).toEqual({ query: 'llm-search' })
+      })
+
+      it.concurrent(
+        'should fill field when user typed something then removed it (field becomes empty string)',
+        () => {
+          const userProvided = {
+            workflowId: 'workflow-123',
+            inputMapping: '{"query": ""}',
+          }
+          const llmGenerated = {
+            inputMapping: { query: 'llm-generated-search' },
+          }
+
+          const merged = mergeToolParameters(userProvided, llmGenerated)
+
+          expect(merged.inputMapping).toEqual({ query: 'llm-generated-search' })
+        }
+      )
+
+      it.concurrent('should not affect other parameters - normal override behavior', () => {
+        const userProvided = {
+          apiKey: 'user-key',
+          channel: '#general',
+        }
+        const llmGenerated = {
+          message: 'Hello world',
+          channel: '#random',
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        expect(merged.apiKey).toBe('user-key')
+        expect(merged.channel).toBe('#general')
+        expect(merged.message).toBe('Hello world')
+      })
+
+      it.concurrent('should preserve 0 and false as valid user values in inputMapping', () => {
+        const userProvided = {
+          workflowId: 'workflow-123',
+          inputMapping: '{"limit": 0, "enabled": false, "query": ""}',
+        }
+        const llmGenerated = {
+          inputMapping: { limit: 10, enabled: true, query: 'llm-search' },
+        }
+
+        const merged = mergeToolParameters(userProvided, llmGenerated)
+
+        // 0 and false should be preserved (they're valid values)
+        // empty string should be filled by LLM
+        expect(merged.inputMapping).toEqual({
+          limit: 0,
+          enabled: false,
+          query: 'llm-search',
+        })
+      })
+    })
+  })
+
   describe('Type Interface Validation', () => {
-    it.concurrent('should have properly typed ToolSchema', () => {
-      const schema: ToolSchema = createLLMToolSchema(mockToolConfig, {})
+    it.concurrent('should have properly typed ToolSchema', async () => {
+      const schema: ToolSchema = await createLLMToolSchema(mockToolConfig, {})
 
       expect(schema.type).toBe('object')
       expect(typeof schema.properties).toBe('object')
       expect(Array.isArray(schema.required)).toBe(true)
 
-      // Verify properties have correct structure
       Object.values(schema.properties).forEach((prop) => {
         expect(prop).toHaveProperty('type')
         expect(prop).toHaveProperty('description')

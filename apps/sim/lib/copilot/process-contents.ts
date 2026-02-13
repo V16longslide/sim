@@ -1,9 +1,13 @@
 import { db } from '@sim/db'
 import { copilotChats, document, knowledgeBase, templates } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { and, eq, isNull } from 'drizzle-orm'
-import { createLogger } from '@/lib/logs/console/logger'
-import { loadWorkflowFromNormalizedTables } from '@/lib/workflows/db-helpers'
-import type { ChatContext } from '@/stores/copilot/types'
+import { loadWorkflowFromNormalizedTables } from '@/lib/workflows/persistence/utils'
+import { sanitizeForCopilot } from '@/lib/workflows/sanitization/json-sanitizer'
+import { isHiddenFromDisplay } from '@/blocks/types'
+import { getUserPermissionConfig } from '@/ee/access-control/utils/permission-check'
+import { escapeRegExp } from '@/executor/constants'
+import type { ChatContext } from '@/stores/panel/copilot/types'
 
 export type AgentContextType =
   | 'past_chat'
@@ -40,29 +44,20 @@ export async function processContexts(
           ctx.kind
         )
       }
-      if (ctx.kind === 'knowledge' && (ctx as any).knowledgeId) {
-        return await processKnowledgeFromDb(
-          (ctx as any).knowledgeId,
-          ctx.label ? `@${ctx.label}` : '@'
-        )
+      if (ctx.kind === 'knowledge' && ctx.knowledgeId) {
+        return await processKnowledgeFromDb(ctx.knowledgeId, ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'blocks' && (ctx as any).blockId) {
-        return await processBlockMetadata((ctx as any).blockId, ctx.label ? `@${ctx.label}` : '@')
+      if (ctx.kind === 'blocks' && ctx.blockIds?.length > 0) {
+        return await processBlockMetadata(ctx.blockIds[0], ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'templates' && (ctx as any).templateId) {
-        return await processTemplateFromDb(
-          (ctx as any).templateId,
-          ctx.label ? `@${ctx.label}` : '@'
-        )
+      if (ctx.kind === 'templates' && ctx.templateId) {
+        return await processTemplateFromDb(ctx.templateId, ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'logs' && (ctx as any).executionId) {
-        return await processExecutionLogFromDb(
-          (ctx as any).executionId,
-          ctx.label ? `@${ctx.label}` : '@'
-        )
+      if (ctx.kind === 'logs' && ctx.executionId) {
+        return await processExecutionLogFromDb(ctx.executionId, ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'workflow_block' && ctx.workflowId && (ctx as any).blockId) {
-        return await processWorkflowBlockFromDb(ctx.workflowId, (ctx as any).blockId, ctx.label)
+      if (ctx.kind === 'workflow_block' && ctx.workflowId && ctx.blockId) {
+        return await processWorkflowBlockFromDb(ctx.workflowId, ctx.blockId, ctx.label)
       }
       // Other kinds can be added here: workflow, blocks, logs, knowledge, templates, docs
       return null
@@ -95,29 +90,24 @@ export async function processContextsServer(
           ctx.kind
         )
       }
-      if (ctx.kind === 'knowledge' && (ctx as any).knowledgeId) {
-        return await processKnowledgeFromDb(
-          (ctx as any).knowledgeId,
-          ctx.label ? `@${ctx.label}` : '@'
+      if (ctx.kind === 'knowledge' && ctx.knowledgeId) {
+        return await processKnowledgeFromDb(ctx.knowledgeId, ctx.label ? `@${ctx.label}` : '@')
+      }
+      if (ctx.kind === 'blocks' && ctx.blockIds?.length > 0) {
+        return await processBlockMetadata(
+          ctx.blockIds[0],
+          ctx.label ? `@${ctx.label}` : '@',
+          userId
         )
       }
-      if (ctx.kind === 'blocks' && (ctx as any).blockId) {
-        return await processBlockMetadata((ctx as any).blockId, ctx.label ? `@${ctx.label}` : '@')
+      if (ctx.kind === 'templates' && ctx.templateId) {
+        return await processTemplateFromDb(ctx.templateId, ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'templates' && (ctx as any).templateId) {
-        return await processTemplateFromDb(
-          (ctx as any).templateId,
-          ctx.label ? `@${ctx.label}` : '@'
-        )
+      if (ctx.kind === 'logs' && ctx.executionId) {
+        return await processExecutionLogFromDb(ctx.executionId, ctx.label ? `@${ctx.label}` : '@')
       }
-      if (ctx.kind === 'logs' && (ctx as any).executionId) {
-        return await processExecutionLogFromDb(
-          (ctx as any).executionId,
-          ctx.label ? `@${ctx.label}` : '@'
-        )
-      }
-      if (ctx.kind === 'workflow_block' && ctx.workflowId && (ctx as any).blockId) {
-        return await processWorkflowBlockFromDb(ctx.workflowId, (ctx as any).blockId, ctx.label)
+      if (ctx.kind === 'workflow_block' && ctx.workflowId && ctx.blockId) {
+        return await processWorkflowBlockFromDb(ctx.workflowId, ctx.blockId, ctx.label)
       }
       if (ctx.kind === 'docs') {
         try {
@@ -150,10 +140,6 @@ export async function processContextsServer(
     kinds: Array.from(filtered.reduce((s, r) => s.add(r.type), new Set<string>())),
   })
   return filtered
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function sanitizeMessageForDocs(rawMessage: string, contexts: ChatContext[] | undefined): string {
@@ -260,12 +246,13 @@ async function processWorkflowFromDb(
       loops: normalized.loops || {},
       parallels: normalized.parallels || {},
     }
+    // Sanitize workflow state for copilot (remove UI-specific data like positions)
+    const sanitizedState = sanitizeForCopilot(workflowState)
     // Match get-user-workflow format: just the workflow state JSON
-    const content = JSON.stringify(workflowState, null, 2)
-    logger.info('Processed workflow context', {
+    const content = JSON.stringify(sanitizedState, null, 2)
+    logger.info('Processed sanitized workflow context', {
       workflowId,
-      blocks: Object.keys(workflowState.blocks || {}).length,
-      edges: workflowState.edges.length,
+      blocks: Object.keys(sanitizedState.blocks || {}).length,
     })
     // Use the provided kind for the type
     return { type: kind, tag, content }
@@ -356,8 +343,21 @@ async function processKnowledgeFromDb(
   }
 }
 
-async function processBlockMetadata(blockId: string, tag: string): Promise<AgentContext | null> {
+async function processBlockMetadata(
+  blockId: string,
+  tag: string,
+  userId?: string
+): Promise<AgentContext | null> {
   try {
+    if (userId) {
+      const permissionConfig = await getUserPermissionConfig(userId)
+      const allowedIntegrations = permissionConfig?.allowedIntegrations
+      if (allowedIntegrations != null && !allowedIntegrations.includes(blockId)) {
+        logger.debug('Block not allowed by permission group', { blockId, userId })
+        return null
+      }
+    }
+
     // Reuse registry to match get_blocks_metadata tool result
     const { registry: blockRegistry } = await import('@/blocks/registry')
     const { tools: toolsRegistry } = await import('@/tools/registry')
@@ -380,7 +380,11 @@ async function processBlockMetadata(blockId: string, tag: string): Promise<Agent
         category: blockConfig.category,
         bgColor: blockConfig.bgColor,
         inputs: blockConfig.inputs || {},
-        outputs: blockConfig.outputs || {},
+        outputs: blockConfig.outputs
+          ? Object.fromEntries(
+              Object.entries(blockConfig.outputs).filter(([_, def]) => !isHiddenFromDisplay(def))
+            )
+          : {},
         tools: blockConfig.tools?.access || [],
         hideFromToolbar: blockConfig.hideFromToolbar,
       }
@@ -425,9 +429,7 @@ async function processTemplateFromDb(
       .select({
         id: templates.id,
         name: templates.name,
-        description: templates.description,
-        category: templates.category,
-        author: templates.author,
+        details: templates.details,
         stars: templates.stars,
         state: templates.state,
       })
@@ -436,14 +438,11 @@ async function processTemplateFromDb(
       .limit(1)
     const t = rows?.[0]
     if (!t) return null
-    const workflowState = (t as any).state || {}
-    // Match get-user-workflow format: just the workflow state JSON
+    const workflowState = t.state || {}
     const summary = {
       id: t.id,
       name: t.name,
-      description: t.description || '',
-      category: t.category,
-      author: t.author,
+      description: (t.details as any)?.tagline || '',
       stars: t.stars || 0,
       workflow: workflowState,
     }

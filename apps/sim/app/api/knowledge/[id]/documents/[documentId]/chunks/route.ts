@@ -1,10 +1,10 @@
+import { createLogger } from '@sim/logger'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getSession } from '@/lib/auth'
+import { checkSessionOrInternalAuth } from '@/lib/auth/hybrid'
+import { generateRequestId } from '@/lib/core/utils/request'
 import { batchChunkOperation, createChunk, queryChunks } from '@/lib/knowledge/chunks/service'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
-import { getUserId } from '@/app/api/auth/oauth/utils'
+import { authorizeWorkflowByWorkspacePermission } from '@/lib/workflows/utils'
 import { checkDocumentAccess, checkDocumentWriteAccess } from '@/app/api/knowledge/utils'
 import { calculateCost } from '@/providers/utils'
 
@@ -38,13 +38,14 @@ export async function GET(
   const { id: knowledgeBaseId, documentId } = await params
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(req, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized chunks access attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const accessCheck = await checkDocumentAccess(knowledgeBaseId, documentId, session.user.id)
+    const accessCheck = await checkDocumentAccess(knowledgeBaseId, documentId, userId)
 
     if (!accessCheck.hasAccess) {
       if (accessCheck.notFound) {
@@ -54,7 +55,7 @@ export async function GET(
         return NextResponse.json({ error: accessCheck.reason }, { status: 404 })
       }
       logger.warn(
-        `[${requestId}] User ${session.user.id} attempted unauthorized chunks access: ${accessCheck.reason}`
+        `[${requestId}] User ${userId} attempted unauthorized chunks access: ${accessCheck.reason}`
       )
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -113,13 +114,25 @@ export async function POST(
     const body = await req.json()
     const { workflowId, ...searchParams } = body
 
-    const userId = await getUserId(requestId, workflowId)
+    const auth = await checkSessionOrInternalAuth(req, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
+      logger.warn(`[${requestId}] Authentication failed: ${auth.error || 'Unauthorized'}`)
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const userId = auth.userId
 
-    if (!userId) {
-      const errorMessage = workflowId ? 'Workflow not found' : 'Unauthorized'
-      const statusCode = workflowId ? 404 : 401
-      logger.warn(`[${requestId}] Authentication failed: ${errorMessage}`)
-      return NextResponse.json({ error: errorMessage }, { status: statusCode })
+    if (workflowId) {
+      const authorization = await authorizeWorkflowByWorkspacePermission({
+        workflowId,
+        userId,
+        action: 'write',
+      })
+      if (!authorization.allowed) {
+        return NextResponse.json(
+          { error: authorization.message || 'Access denied' },
+          { status: authorization.status }
+        )
+      }
     }
 
     const accessCheck = await checkDocumentWriteAccess(knowledgeBaseId, documentId, userId)
@@ -156,6 +169,7 @@ export async function POST(
       const validatedData = CreateChunkSchema.parse(searchParams)
 
       const docTags = {
+        // Text tags (7 slots)
         tag1: doc.tag1 ?? null,
         tag2: doc.tag2 ?? null,
         tag3: doc.tag3 ?? null,
@@ -163,6 +177,19 @@ export async function POST(
         tag5: doc.tag5 ?? null,
         tag6: doc.tag6 ?? null,
         tag7: doc.tag7 ?? null,
+        // Number tags (5 slots)
+        number1: doc.number1 ?? null,
+        number2: doc.number2 ?? null,
+        number3: doc.number3 ?? null,
+        number4: doc.number4 ?? null,
+        number5: doc.number5 ?? null,
+        // Date tags (2 slots)
+        date1: doc.date1 ?? null,
+        date2: doc.date2 ?? null,
+        // Boolean tags (3 slots)
+        boolean1: doc.boolean1 ?? null,
+        boolean2: doc.boolean2 ?? null,
+        boolean3: doc.boolean3 ?? null,
       }
 
       const newChunk = await createChunk(
@@ -170,7 +197,8 @@ export async function POST(
         documentId,
         docTags,
         validatedData,
-        requestId
+        requestId,
+        accessCheck.knowledgeBase?.workspaceId
       )
 
       let cost = null
@@ -233,13 +261,14 @@ export async function PATCH(
   const { id: knowledgeBaseId, documentId } = await params
 
   try {
-    const session = await getSession()
-    if (!session?.user?.id) {
+    const auth = await checkSessionOrInternalAuth(req, { requireWorkflowId: false })
+    if (!auth.success || !auth.userId) {
       logger.warn(`[${requestId}] Unauthorized batch chunk operation attempt`)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const userId = auth.userId
 
-    const accessCheck = await checkDocumentAccess(knowledgeBaseId, documentId, session.user.id)
+    const accessCheck = await checkDocumentAccess(knowledgeBaseId, documentId, userId)
 
     if (!accessCheck.hasAccess) {
       if (accessCheck.notFound) {
@@ -249,7 +278,7 @@ export async function PATCH(
         return NextResponse.json({ error: accessCheck.reason }, { status: 404 })
       }
       logger.warn(
-        `[${requestId}] User ${session.user.id} attempted unauthorized batch chunk operation: ${accessCheck.reason}`
+        `[${requestId}] User ${userId} attempted unauthorized batch chunk operation: ${accessCheck.reason}`
       )
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

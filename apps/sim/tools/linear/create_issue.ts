@@ -1,4 +1,5 @@
 import type { LinearCreateIssueParams, LinearCreateIssueResponse } from '@/tools/linear/types'
+import { ISSUE_EXTENDED_OUTPUT_PROPERTIES } from '@/tools/linear/types'
 import type { ToolConfig } from '@/tools/types'
 
 export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCreateIssueResponse> =
@@ -17,14 +18,14 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
       teamId: {
         type: 'string',
         required: true,
-        visibility: 'user-only',
-        description: 'Linear team ID',
+        visibility: 'user-or-llm',
+        description: 'Linear team ID (UUID format) where the issue will be created',
       },
       projectId: {
         type: 'string',
-        required: true,
-        visibility: 'user-only',
-        description: 'Linear project ID',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Linear project ID (UUID format) to associate with the issue',
       },
       title: {
         type: 'string',
@@ -37,6 +38,66 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
         required: false,
         visibility: 'user-or-llm',
         description: 'Issue description',
+      },
+      stateId: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Workflow state ID (status)',
+      },
+      assigneeId: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'User ID to assign the issue to',
+      },
+      priority: {
+        type: 'number',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Priority (0=No priority, 1=Urgent, 2=High, 3=Normal, 4=Low)',
+      },
+      estimate: {
+        type: 'number',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Estimate in points',
+      },
+      labelIds: {
+        type: 'array',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Array of label IDs to set on the issue',
+      },
+      cycleId: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Cycle ID to assign the issue to',
+      },
+      parentId: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Parent issue ID (for creating sub-issues)',
+      },
+      dueDate: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Due date in ISO 8601 format (date only: YYYY-MM-DD)',
+      },
+      subscriberIds: {
+        type: 'array',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Array of user IDs to subscribe to the issue',
+      },
+      projectMilestoneId: {
+        type: 'string',
+        required: false,
+        visibility: 'user-or-llm',
+        description: 'Project milestone ID to associate with the issue',
       },
     },
 
@@ -56,33 +117,99 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
         if (!params.title || !params.title.trim()) {
           throw new Error('Title is required to create a Linear issue')
         }
+
+        const input: Record<string, any> = {
+          teamId: params.teamId,
+          title: params.title,
+        }
+
+        if (params.projectId != null && params.projectId !== '') {
+          input.projectId = params.projectId
+        }
+        if (params.description != null && params.description !== '') {
+          input.description = params.description
+        }
+        if (params.stateId != null && params.stateId !== '') {
+          input.stateId = params.stateId
+        }
+        if (params.assigneeId != null && params.assigneeId !== '') {
+          input.assigneeId = params.assigneeId
+        }
+        if (params.priority != null) {
+          input.priority = Number(params.priority)
+        }
+        if (params.estimate != null) {
+          input.estimate = Number(params.estimate)
+        }
+        if (params.labelIds != null && Array.isArray(params.labelIds)) {
+          input.labelIds = params.labelIds
+        }
+        if (params.cycleId != null && params.cycleId !== '') {
+          input.cycleId = params.cycleId
+        }
+        if (params.parentId != null && params.parentId !== '') {
+          input.parentId = params.parentId
+        }
+        if (params.dueDate != null && params.dueDate !== '') {
+          input.dueDate = params.dueDate
+        }
+        if (params.subscriberIds != null && Array.isArray(params.subscriberIds)) {
+          input.subscriberIds = params.subscriberIds
+        }
+        if (params.projectMilestoneId != null && params.projectMilestoneId !== '') {
+          input.projectMilestoneId = params.projectMilestoneId
+        }
+
         return {
           query: `
-        mutation CreateIssue($teamId: String!, $projectId: String!, $title: String!, $description: String) {
-          issueCreate(
-            input: {
-              teamId: $teamId
-              projectId: $projectId
-              title: $title
-              description: $description
-            }
-          ) {
+        mutation CreateIssue($input: IssueCreateInput!) {
+          issueCreate(input: $input) {
             issue {
               id
               title
               description
-              state { name }
+              priority
+              estimate
+              url
+              dueDate
+              state {
+                id
+                name
+                type
+              }
+              assignee {
+                id
+                name
+                email
+              }
               team { id }
               project { id }
+              cycle {
+                id
+                number
+                name
+              }
+              parent {
+                id
+                title
+              }
+              projectMilestone {
+                id
+                name
+              }
+              labels {
+                nodes {
+                  id
+                  name
+                  color
+                }
+              }
             }
           }
         }
       `,
           variables: {
-            teamId: params.teamId,
-            projectId: params.projectId,
-            title: params.title,
-            description: params.description,
+            input,
           },
         }
       },
@@ -90,7 +217,25 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
 
     transformResponse: async (response) => {
       const data = await response.json()
-      const issue = data.data.issueCreate.issue
+
+      if (data.errors) {
+        return {
+          success: false,
+          error: data.errors[0]?.message || 'Failed to create issue',
+          output: {},
+        }
+      }
+
+      const result = data.data?.issueCreate
+      if (!result) {
+        return {
+          success: false,
+          error: 'Issue creation was not successful',
+          output: {},
+        }
+      }
+
+      const issue = result.issue
       return {
         success: true,
         output: {
@@ -98,9 +243,22 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
             id: issue.id,
             title: issue.title,
             description: issue.description,
-            state: issue.state?.name,
+            priority: issue.priority,
+            estimate: issue.estimate,
+            url: issue.url,
+            dueDate: issue.dueDate,
+            state: issue.state,
+            assignee: issue.assignee,
             teamId: issue.team?.id,
             projectId: issue.project?.id,
+            cycleId: issue.cycle?.id,
+            cycleNumber: issue.cycle?.number,
+            cycleName: issue.cycle?.name,
+            parentId: issue.parent?.id,
+            parentTitle: issue.parent?.title,
+            projectMilestoneId: issue.projectMilestone?.id,
+            projectMilestoneName: issue.projectMilestone?.name,
+            labels: issue.labels?.nodes || [],
           },
         },
       }
@@ -109,16 +267,8 @@ export const linearCreateIssueTool: ToolConfig<LinearCreateIssueParams, LinearCr
     outputs: {
       issue: {
         type: 'object',
-        description:
-          'The created issue containing id, title, description, state, teamId, and projectId',
-        properties: {
-          id: { type: 'string', description: 'Issue ID' },
-          title: { type: 'string', description: 'Issue title' },
-          description: { type: 'string', description: 'Issue description' },
-          state: { type: 'string', description: 'Issue state' },
-          teamId: { type: 'string', description: 'Team ID' },
-          projectId: { type: 'string', description: 'Project ID' },
-        },
+        description: 'The created issue with all its properties',
+        properties: ISSUE_EXTENDED_OUTPUT_PROPERTIES,
       },
     },
   }

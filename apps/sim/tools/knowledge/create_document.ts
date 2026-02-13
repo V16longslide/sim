@@ -1,4 +1,6 @@
 import type { KnowledgeCreateDocumentResponse } from '@/tools/knowledge/types'
+import { enrichKBTagsSchema } from '@/tools/schema-enrichers'
+import { formatDocumentTagsForAPI, parseDocumentTags } from '@/tools/shared/tags'
 import type { ToolConfig } from '@/tools/types'
 
 export const knowledgeCreateDocumentTool: ToolConfig<any, KnowledgeCreateDocumentResponse> = {
@@ -11,57 +13,33 @@ export const knowledgeCreateDocumentTool: ToolConfig<any, KnowledgeCreateDocumen
     knowledgeBaseId: {
       type: 'string',
       required: true,
+      visibility: 'user-or-llm',
       description: 'ID of the knowledge base containing the document',
     },
     name: {
       type: 'string',
       required: true,
+      visibility: 'user-or-llm',
       description: 'Name of the document',
     },
     content: {
       type: 'string',
       required: true,
+      visibility: 'user-or-llm',
       description: 'Content of the document',
     },
-    tag1: {
-      type: 'string',
+    documentTags: {
+      type: 'object',
       required: false,
-      description: 'Tag 1 value for the document',
+      visibility: 'user-or-llm',
+      description: 'Document tags',
     },
-    tag2: {
-      type: 'string',
-      required: false,
-      description: 'Tag 2 value for the document',
-    },
-    tag3: {
-      type: 'string',
-      required: false,
-      description: 'Tag 3 value for the document',
-    },
-    tag4: {
-      type: 'string',
-      required: false,
-      description: 'Tag 4 value for the document',
-    },
-    tag5: {
-      type: 'string',
-      required: false,
-      description: 'Tag 5 value for the document',
-    },
-    tag6: {
-      type: 'string',
-      required: false,
-      description: 'Tag 6 value for the document',
-    },
-    tag7: {
-      type: 'string',
-      required: false,
-      description: 'Tag 7 value for the document',
-    },
-    documentTagsData: {
-      type: 'array',
-      required: false,
-      description: 'Structured tag data with names, types, and values',
+  },
+
+  schemaEnrichment: {
+    documentTags: {
+      dependsOn: 'knowledgeBaseId',
+      enrichSchema: enrichKBTagsSchema,
     },
   },
 
@@ -82,9 +60,6 @@ export const knowledgeCreateDocumentTool: ToolConfig<any, KnowledgeCreateDocumen
       if (documentName.length > 255) {
         throw new Error('Document name must be 255 characters or less')
       }
-      if (/[<>:"/\\|?*]/.test(documentName)) {
-        throw new Error('Document name contains invalid characters. Avoid: < > : " / \\ | ? *')
-      }
       if (!textContent || textContent.length < 1) {
         throw new Error('Document content cannot be empty')
       }
@@ -102,24 +77,9 @@ export const knowledgeCreateDocumentTool: ToolConfig<any, KnowledgeCreateDocumen
 
       const dataUri = `data:text/plain;base64,${base64Content}`
 
-      const tagData: Record<string, string> = {}
-
-      if (params.documentTags) {
-        let parsedTags = params.documentTags
-
-        // Handle both string (JSON) and array formats
-        if (typeof params.documentTags === 'string') {
-          try {
-            parsedTags = JSON.parse(params.documentTags)
-          } catch (error) {
-            parsedTags = []
-          }
-        }
-
-        if (Array.isArray(parsedTags)) {
-          tagData.documentTagsData = JSON.stringify(parsedTags)
-        }
-      }
+      // Parse document tags from various formats (object, array, JSON string)
+      const parsedTags = parseDocumentTags(params.documentTags)
+      const tagData = formatDocumentTagsForAPI(parsedTags)
 
       const documents = [
         {

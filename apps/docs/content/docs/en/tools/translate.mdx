@@ -8,26 +8,6 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="translate"
   color="#FF4B4B"
-  icon={true}
-  iconSvg={`<svg className="block-icon"
-      xmlns='http://www.w3.org/2000/svg'
-      
-      
-      viewBox='0 0 24 24'
-      fill='none'
-      stroke='currentColor'
-      strokeWidth='2'
-      strokeLinecap='round'
-      strokeLinejoin='round'
-      
-    >
-      <path d='m5 8 6 6' />
-      <path d='m4 14 6-6 2-3' />
-      <path d='M2 5h12' />
-      <path d='M7 2h1' />
-      <path d='m22 22-5-10-5 10' />
-      <path d='M14 18h6' />
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
@@ -54,42 +34,35 @@ Integrate Translate into the workflow. Can translate text to any language.
 
 ## Tools
 
-### `openai_chat`
+### `llm_chat`
+
+Send a chat completion request to any supported LLM provider
 
 #### Input
 
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
+| `model` | string | Yes | The model to use \(e.g., gpt-4o, claude-sonnet-4-5, gemini-2.0-flash\) |
+| `systemPrompt` | string | No | System prompt to set the behavior of the assistant |
+| `context` | string | Yes | The user message or context to send to the model |
+| `apiKey` | string | No | API key for the provider \(uses platform key if not provided for hosted models\) |
+| `temperature` | number | No | Temperature for response generation \(0-2\) |
+| `maxTokens` | number | No | Maximum tokens in the response |
+| `azureEndpoint` | string | No | Azure OpenAI endpoint URL |
+| `azureApiVersion` | string | No | Azure OpenAI API version |
+| `vertexProject` | string | No | Google Cloud project ID for Vertex AI |
+| `vertexLocation` | string | No | Google Cloud location for Vertex AI \(defaults to us-central1\) |
+| `vertexCredential` | string | No | Google Cloud OAuth credential ID for Vertex AI |
+| `bedrockAccessKeyId` | string | No | AWS Access Key ID for Bedrock |
+| `bedrockSecretKey` | string | No | AWS Secret Access Key for Bedrock |
+| `bedrockRegion` | string | No | AWS region for Bedrock \(defaults to us-east-1\) |
 
 #### Output
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `content` | string | Translated text |
-| `model` | string | Model used |
-| `tokens` | json | Token usage |
-
-### `anthropic_chat`
+| `content` | string | The generated response content |
+| `model` | string | The model used for generation |
+| `tokens` | object | Token usage information |
 
 
-### `google_chat`
-
-#### Input
-
-| Parameter | Type | Required | Description |
-| --------- | ---- | -------- | ----------- |
-
-#### Output
-
-| Parameter | Type | Description |
-| --------- | ---- | ----------- |
-| `content` | string | Translated text |
-| `model` | string | Model used |
-| `tokens` | json | Token usage |
-
-
-
-## Notes
-
-- Category: `tools`
-- Type: `translate`

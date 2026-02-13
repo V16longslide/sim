@@ -1,3 +1,4 @@
+import type { UserFile } from '@/executor/types'
 import type { ToolResponse } from '@/tools/types'
 
 export interface SharepointSite {
@@ -176,6 +177,11 @@ export interface SharepointToolParams {
   // Update List Item
   itemId?: string
   listItemFields?: Record<string, unknown>
+  // Upload File
+  driveId?: string
+  folderPath?: string
+  fileName?: string
+  files?: UserFile[]
 }
 
 export interface GraphApiResponse {
@@ -260,6 +266,7 @@ export type SharepointResponse =
   | SharepointCreateListResponse
   | SharepointUpdateListItemResponse
   | SharepointAddListItemResponse
+  | SharepointUploadFileResponse
 
 export interface SharepointGetListResponse extends ToolResponse {
   output: {
@@ -290,5 +297,21 @@ export interface SharepointAddListItemResponse extends ToolResponse {
       id: string
       fields?: Record<string, unknown>
     }
+  }
+}
+
+export interface SharepointUploadedFile {
+  id: string
+  name: string
+  webUrl: string
+  size: number
+  createdDateTime?: string
+  lastModifiedDateTime?: string
+}
+
+export interface SharepointUploadFileResponse extends ToolResponse {
+  output: {
+    uploadedFiles: SharepointUploadedFile[]
+    fileCount: number
   }
 }

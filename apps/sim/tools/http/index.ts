@@ -1,3 +1,5 @@
-import { requestTool } from '@/tools/http/request'
+import { requestTool } from './request'
+import { webhookRequestTool } from './webhook_request'
 
-export { requestTool }
+export const httpRequestTool = requestTool
+export { webhookRequestTool }

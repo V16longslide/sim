@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type {
   SharepointCreatePageResponse,
   SharepointPage,
@@ -17,7 +17,6 @@ export const createPageTool: ToolConfig<SharepointToolParams, SharepointCreatePa
   oauth: {
     required: true,
     provider: 'sharepoint',
-    additionalScopes: ['openid', 'profile', 'email', 'Sites.ReadWrite.All', 'offline_access'],
   },
 
   params: {
@@ -42,8 +41,8 @@ export const createPageTool: ToolConfig<SharepointToolParams, SharepointCreatePa
     pageName: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The name of the page to create',
+      visibility: 'user-or-llm',
+      description: 'The name of the page to create. Example: My-New-Page.aspx or Report-2024.aspx',
     },
     pageTitle: {
       type: 'string',

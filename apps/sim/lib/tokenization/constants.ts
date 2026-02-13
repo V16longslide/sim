@@ -21,6 +21,11 @@ export const TOKENIZATION_CONFIG = {
       confidence: 'high',
       supportedMethods: ['heuristic', 'fallback'],
     },
+    'azure-anthropic': {
+      avgCharsPerToken: 4.5,
+      confidence: 'high',
+      supportedMethods: ['heuristic', 'fallback'],
+    },
     google: {
       avgCharsPerToken: 5,
       confidence: 'medium',
@@ -37,6 +42,11 @@ export const TOKENIZATION_CONFIG = {
       supportedMethods: ['heuristic', 'fallback'],
     },
     cerebras: {
+      avgCharsPerToken: 4,
+      confidence: 'medium',
+      supportedMethods: ['heuristic', 'fallback'],
+    },
+    mistral: {
       avgCharsPerToken: 4,
       confidence: 'medium',
       supportedMethods: ['heuristic', 'fallback'],

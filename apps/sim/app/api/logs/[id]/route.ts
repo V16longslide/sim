@@ -1,10 +1,15 @@
 import { db } from '@sim/db'
-import { permissions, workflow, workflowExecutionLogs } from '@sim/db/schema'
+import {
+  permissions,
+  workflow,
+  workflowDeploymentVersion,
+  workflowExecutionLogs,
+} from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
 import { and, eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { createLogger } from '@/lib/logs/console/logger'
-import { generateRequestId } from '@/lib/utils'
+import { generateRequestId } from '@/lib/core/utils/request'
 
 const logger = createLogger('LogDetailsByIdAPI')
 
@@ -29,6 +34,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         workflowId: workflowExecutionLogs.workflowId,
         executionId: workflowExecutionLogs.executionId,
         stateSnapshotId: workflowExecutionLogs.stateSnapshotId,
+        deploymentVersionId: workflowExecutionLogs.deploymentVersionId,
         level: workflowExecutionLogs.level,
         trigger: workflowExecutionLogs.trigger,
         startedAt: workflowExecutionLogs.startedAt,
@@ -46,14 +52,20 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         workflowWorkspaceId: workflow.workspaceId,
         workflowCreatedAt: workflow.createdAt,
         workflowUpdatedAt: workflow.updatedAt,
+        deploymentVersion: workflowDeploymentVersion.version,
+        deploymentVersionName: workflowDeploymentVersion.name,
       })
       .from(workflowExecutionLogs)
-      .innerJoin(workflow, eq(workflowExecutionLogs.workflowId, workflow.id))
+      .leftJoin(workflow, eq(workflowExecutionLogs.workflowId, workflow.id))
+      .leftJoin(
+        workflowDeploymentVersion,
+        eq(workflowDeploymentVersion.id, workflowExecutionLogs.deploymentVersionId)
+      )
       .innerJoin(
         permissions,
         and(
           eq(permissions.entityType, 'workspace'),
-          eq(permissions.entityId, workflow.workspaceId),
+          eq(permissions.entityId, workflowExecutionLogs.workspaceId),
           eq(permissions.userId, userId)
         )
       )
@@ -65,22 +77,27 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    const workflowSummary = {
-      id: log.workflowId,
-      name: log.workflowName,
-      description: log.workflowDescription,
-      color: log.workflowColor,
-      folderId: log.workflowFolderId,
-      userId: log.workflowUserId,
-      workspaceId: log.workflowWorkspaceId,
-      createdAt: log.workflowCreatedAt,
-      updatedAt: log.workflowUpdatedAt,
-    }
+    const workflowSummary = log.workflowId
+      ? {
+          id: log.workflowId,
+          name: log.workflowName,
+          description: log.workflowDescription,
+          color: log.workflowColor,
+          folderId: log.workflowFolderId,
+          userId: log.workflowUserId,
+          workspaceId: log.workflowWorkspaceId,
+          createdAt: log.workflowCreatedAt,
+          updatedAt: log.workflowUpdatedAt,
+        }
+      : null
 
     const response = {
       id: log.id,
       workflowId: log.workflowId,
       executionId: log.executionId,
+      deploymentVersionId: log.deploymentVersionId,
+      deploymentVersion: log.deploymentVersion ?? null,
+      deploymentVersionName: log.deploymentVersionName ?? null,
       level: log.level,
       duration: log.totalDurationMs ? `${log.totalDurationMs}ms` : null,
       trigger: log.trigger,

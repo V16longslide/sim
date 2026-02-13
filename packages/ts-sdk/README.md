@@ -47,24 +47,35 @@ new SimStudioClient(config: SimStudioConfig)
 
 #### Methods
 
-##### executeWorkflow(workflowId, options?)
+##### executeWorkflow(workflowId, input?, options?)
 
 Execute a workflow with optional input data.
 
 ```typescript
+// With object input (spread at root level of request body)
 const result = await client.executeWorkflow('workflow-id', {
-  input: { message: 'Hello, world!' },
-  timeout: 30000 // 30 seconds
+  message: 'Hello, world!'
+});
+
+// With primitive input (wrapped as { input: value })
+const result = await client.executeWorkflow('workflow-id', 'NVDA');
+
+// With options
+const result = await client.executeWorkflow('workflow-id', { message: 'Hello' }, {
+  timeout: 60000
 });
 ```
 
 **Parameters:**
 - `workflowId` (string): The ID of the workflow to execute
+- `input` (any, optional): Input data to pass to the workflow. Objects are spread at the root level, primitives/arrays are wrapped in `{ input: value }`. File objects are automatically converted to base64.
 - `options` (ExecutionOptions, optional):
-  - `input` (any): Input data to pass to the workflow
   - `timeout` (number): Timeout in milliseconds (default: 30000)
+  - `stream` (boolean): Enable streaming responses
+  - `selectedOutputs` (string[]): Block outputs to stream (e.g., `["agent1.content"]`)
+  - `async` (boolean): Execute asynchronously and return execution ID
 
-**Returns:** `Promise<WorkflowExecutionResult>`
+**Returns:** `Promise<WorkflowExecutionResult | AsyncExecutionResult>`
 
 ##### getWorkflowStatus(workflowId)
 
@@ -96,24 +107,88 @@ if (isReady) {
 
 **Returns:** `Promise<boolean>`
 
-##### executeWorkflowSync(workflowId, options?)
+##### executeWorkflowSync(workflowId, input?, options?)
 
 Execute a workflow and poll for completion (useful for long-running workflows).
 
 ```typescript
-const result = await client.executeWorkflowSync('workflow-id', {
-  input: { data: 'some input' },
+const result = await client.executeWorkflowSync('workflow-id', { data: 'some input' }, {
   timeout: 60000
 });
 ```
 
 **Parameters:**
 - `workflowId` (string): The ID of the workflow to execute
+- `input` (any, optional): Input data to pass to the workflow
 - `options` (ExecutionOptions, optional):
-  - `input` (any): Input data to pass to the workflow
   - `timeout` (number): Timeout for the initial request in milliseconds
 
 **Returns:** `Promise<WorkflowExecutionResult>`
+
+##### getJobStatus(taskId)
+
+Get the status of an async job.
+
+```typescript
+const status = await client.getJobStatus('task-id-from-async-execution');
+console.log('Job status:', status);
+```
+
+**Parameters:**
+- `taskId` (string): The task ID returned from async execution
+
+**Returns:** `Promise<any>`
+
+##### executeWithRetry(workflowId, input?, options?, retryOptions?)
+
+Execute a workflow with automatic retry on rate limit errors.
+
+```typescript
+const result = await client.executeWithRetry('workflow-id', { message: 'Hello' }, {
+  timeout: 30000
+}, {
+  maxRetries: 3,
+  initialDelay: 1000,
+  maxDelay: 30000,
+  backoffMultiplier: 2
+});
+```
+
+**Parameters:**
+- `workflowId` (string): The ID of the workflow to execute
+- `input` (any, optional): Input data to pass to the workflow
+- `options` (ExecutionOptions, optional): Execution options
+- `retryOptions` (RetryOptions, optional):
+  - `maxRetries` (number): Maximum retry attempts (default: 3)
+  - `initialDelay` (number): Initial delay in ms (default: 1000)
+  - `maxDelay` (number): Maximum delay in ms (default: 30000)
+  - `backoffMultiplier` (number): Backoff multiplier (default: 2)
+
+**Returns:** `Promise<WorkflowExecutionResult | AsyncExecutionResult>`
+
+##### getRateLimitInfo()
+
+Get current rate limit information from the last API response.
+
+```typescript
+const rateInfo = client.getRateLimitInfo();
+if (rateInfo) {
+  console.log('Remaining requests:', rateInfo.remaining);
+}
+```
+
+**Returns:** `RateLimitInfo | null`
+
+##### getUsageLimits()
+
+Get current usage limits and quota information.
+
+```typescript
+const limits = await client.getUsageLimits();
+console.log('Current usage:', limits.usage);
+```
+
+**Returns:** `Promise<UsageLimits>`
 
 ##### setApiKey(apiKey)
 
@@ -157,7 +232,6 @@ interface WorkflowExecutionResult {
 interface WorkflowStatus {
   isDeployed: boolean;
   deployedAt?: string;
-  isPublished: boolean;
   needsRedeployment: boolean;
 }
 ```
@@ -171,6 +245,81 @@ class SimStudioError extends Error {
 }
 ```
 
+### AsyncExecutionResult
+
+```typescript
+interface AsyncExecutionResult {
+  success: boolean;
+  taskId: string;
+  status: 'queued';
+  createdAt: string;
+  links: {
+    status: string;
+  };
+}
+```
+
+### RateLimitInfo
+
+```typescript
+interface RateLimitInfo {
+  limit: number;
+  remaining: number;
+  reset: number;
+  retryAfter?: number;
+}
+```
+
+### UsageLimits
+
+```typescript
+interface UsageLimits {
+  success: boolean;
+  rateLimit: {
+    sync: {
+      isLimited: boolean;
+      limit: number;
+      remaining: number;
+      resetAt: string;
+    };
+    async: {
+      isLimited: boolean;
+      limit: number;
+      remaining: number;
+      resetAt: string;
+    };
+    authType: string;
+  };
+  usage: {
+    currentPeriodCost: number;
+    limit: number;
+    plan: string;
+  };
+}
+```
+
+### ExecutionOptions
+
+```typescript
+interface ExecutionOptions {
+  timeout?: number;
+  stream?: boolean;
+  selectedOutputs?: string[];
+  async?: boolean;
+}
+```
+
+### RetryOptions
+
+```typescript
+interface RetryOptions {
+  maxRetries?: number;
+  initialDelay?: number;
+  maxDelay?: number;
+  backoffMultiplier?: number;
+}
+```
+
 ## Examples
 
 ### Basic Workflow Execution
@@ -179,7 +328,7 @@ class SimStudioError extends Error {
 import { SimStudioClient } from 'simstudio-ts-sdk';
 
 const client = new SimStudioClient({
-  apiKey: process.env.SIMSTUDIO_API_KEY!
+  apiKey: process.env.SIM_API_KEY!
 });
 
 async function runWorkflow() {
@@ -192,10 +341,8 @@ async function runWorkflow() {
 
     // Execute the workflow
     const result = await client.executeWorkflow('my-workflow-id', {
-      input: {
-        message: 'Process this data',
-        userId: '12345'
-      }
+      message: 'Process this data',
+      userId: '12345'
     });
 
     if (result.success) {
@@ -218,7 +365,7 @@ runWorkflow();
 import { SimStudioClient, SimStudioError } from 'simstudio-ts-sdk';
 
 const client = new SimStudioClient({
-  apiKey: process.env.SIMSTUDIO_API_KEY!
+  apiKey: process.env.SIM_API_KEY!
 });
 
 async function executeWithErrorHandling() {
@@ -256,9 +403,63 @@ async function executeWithErrorHandling() {
 ```typescript
 // Using environment variables
 const client = new SimStudioClient({
-  apiKey: process.env.SIMSTUDIO_API_KEY!,
-  baseUrl: process.env.SIMSTUDIO_BASE_URL // optional
+  apiKey: process.env.SIM_API_KEY!,
+  baseUrl: process.env.SIM_BASE_URL // optional
 });
+```
+
+### File Upload
+
+File objects are automatically detected and converted to base64 format. Include them in your input under the field name matching your workflow's API trigger input format:
+
+The SDK converts File objects to this format:
+```typescript
+{
+  type: 'file',
+  data: 'data:mime/type;base64,base64data',
+  name: 'filename',
+  mime: 'mime/type'
+}
+```
+
+Alternatively, you can manually provide files using the URL format:
+```typescript
+{
+  type: 'url',
+  data: 'https://example.com/file.pdf',
+  name: 'file.pdf',
+  mime: 'application/pdf'
+}
+```
+
+```typescript
+import { SimStudioClient } from 'simstudio-ts-sdk';
+import fs from 'fs';
+
+const client = new SimStudioClient({
+  apiKey: process.env.SIM_API_KEY!
+});
+
+// Node.js: Read file and create File object
+const fileBuffer = fs.readFileSync('./document.pdf');
+const file = new File([fileBuffer], 'document.pdf', { type: 'application/pdf' });
+
+// Include files under the field name from your API trigger's input format
+const result = await client.executeWorkflow('workflow-id', {
+  documents: [file],  // Field name must match your API trigger's file input field
+  instructions: 'Process this document'
+});
+
+// Browser: From file input
+const handleFileUpload = async (event: Event) => {
+  const inputEl = event.target as HTMLInputElement;
+  const files = Array.from(inputEl.files || []);
+
+  const result = await client.executeWorkflow('workflow-id', {
+    attachments: files,  // Field name must match your API trigger's file input field
+    query: 'Analyze these files'
+  });
+};
 ```
 
 ## Getting Your API Key

@@ -8,25 +8,6 @@ import { BlockInfoCard } from "@/components/ui/block-info-card"
 <BlockInfoCard 
   type="google_sheets"
   color="#E0E0E0"
-  icon={true}
-  iconSvg={`<svg className="block-icon"
-      
-      xmlns='http://www.w3.org/2000/svg'
-      viewBox='0 0 48 48'
-      
-      
-    >
-      <path
-        fill='#43a047'
-        d='M37,45H11c-1.657,0-3-1.343-3-3V6c0-1.657,1.343-3,3-3h19l10,10v29C40,43.657,38.657,45,37,45z'
-      />
-      <path fill='#c8e6c9' d='M40 13L30 13 30 3z' />
-      <path fill='#2e7d32' d='M30 13L40 23 40 13z' />
-      <path
-        fill='#e8f5e9'
-        d='M31,23H17h-2v2v2v2v2v2v2v2h18v-2v-2v-2v-2v-2v-2v-2H31z M17,25h4v2h-4V25z M17,29h4v2h-4V29z M17,33h4v2h-4V33z M31,35h-8v-2h8V35z M31,31h-8v-2h8V31z M31,27h-8v-2h8V27z'
-      />
-    </svg>`}
 />
 
 {/* MANUAL-CONTENT-START:intro */}
@@ -95,7 +76,7 @@ Dans Sim, l'intégration de Google Sheets permet à vos agents d'interagir direc
 
 ## Instructions d'utilisation
 
-Intégrez les fonctionnalités de Google Sheets pour gérer les données de feuilles de calcul. Lisez des données depuis des plages spécifiques, écrivez de nouvelles données, mettez à jour des cellules existantes et ajoutez des données à la fin des feuilles en utilisant l'authentification OAuth. Prend en charge divers formats d'entrée et de sortie pour une manipulation flexible des données.
+Intégrez Google Sheets dans le flux de travail. Peut lire, écrire, ajouter et mettre à jour des données. Nécessite OAuth.
 
 ## Outils
 
@@ -107,8 +88,8 @@ Lire des données d'une feuille de calcul Google Sheets
 
 | Paramètre | Type | Obligatoire | Description |
 | --------- | ---- | ----------- | ----------- |
-| `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul à lire |
-| `range` | chaîne | Non | La plage de cellules à lire |
+| `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul \(trouvé dans l'URL : docs.google.com/spreadsheets/d/\{SPREADSHEET_ID\}/edit\). |
+| `range` | chaîne | Non | La plage en notation A1 à lire \(par exemple "Sheet1!A1:D10", "A1:B5"\). Par défaut, première feuille A1:Z1000 si non spécifié. |
 
 #### Sortie
 
@@ -125,9 +106,9 @@ Lire des données d'une feuille de calcul Google Sheets
 
 | Paramètre | Type | Obligatoire | Description |
 | --------- | ---- | ----------- | ----------- |
-| `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul dans laquelle écrire |
-| `range` | chaîne | Non | La plage de cellules dans laquelle écrire |
-| `values` | tableau | Oui | Les données à écrire dans la feuille de calcul |
+| `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul |
+| `range` | chaîne | Non | La plage en notation A1 où écrire \(par exemple "Sheet1!A1:D10", "A1:B5"\) |
+| `values` | tableau | Oui | Les données à écrire sous forme de tableau 2D \(par exemple \[\["Nom", "Âge"\], \["Alice", 30\], \["Bob", 25\]\]\) ou tableau d'objets. |
 | `valueInputOption` | chaîne | Non | Le format des données à écrire |
 | `includeValuesInResponse` | booléen | Non | Indique si les valeurs écrites doivent être incluses dans la réponse |
 
@@ -148,12 +129,12 @@ Mettre à jour des données dans une feuille de calcul Google Sheets
 #### Entrée
 
 | Paramètre | Type | Obligatoire | Description |
-| --------- | ---- | ---------- | ----------- |
-| `spreadsheetId` | string | Oui | L'ID de la feuille de calcul à mettre à jour |
-| `range` | string | Non | La plage de cellules à mettre à jour |
-| `values` | array | Oui | Les données à mettre à jour dans la feuille de calcul |
-| `valueInputOption` | string | Non | Le format des données à mettre à jour |
-| `includeValuesInResponse` | boolean | Non | Indique s'il faut inclure les valeurs mises à jour dans la réponse |
+| --------- | ---- | ----------- | ----------- |
+| `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul à mettre à jour |
+| `range` | chaîne | Non | La plage en notation A1 à mettre à jour \(par exemple "Sheet1!A1:D10", "A1:B5"\) |
+| `values` | tableau | Oui | Les données à mettre à jour sous forme de tableau 2D \(par exemple \[\["Nom", "Âge"\], \["Alice", 30\]\]\) ou tableau d'objets. |
+| `valueInputOption` | chaîne | Non | Le format des données à mettre à jour |
+| `includeValuesInResponse` | booléen | Non | Indique si les valeurs mises à jour doivent être incluses dans la réponse |
 
 #### Sortie
 
@@ -174,11 +155,11 @@ Ajouter des données à la fin d'une feuille de calcul Google Sheets
 | Paramètre | Type | Obligatoire | Description |
 | --------- | ---- | ----------- | ----------- |
 | `spreadsheetId` | chaîne | Oui | L'identifiant de la feuille de calcul à laquelle ajouter des données |
-| `range` | chaîne | Non | La plage de cellules après laquelle ajouter des données |
-| `values` | tableau | Oui | Les données à ajouter à la feuille de calcul |
+| `range` | chaîne | Non | La plage de notation A1 après laquelle ajouter des données \(ex. "Feuille1", "Feuille1!A:D"\) |
+| `values` | tableau | Oui | Les données à ajouter sous forme de tableau 2D \(ex. \[\["Alice", 30\], \["Bob", 25\]\]\) ou tableau d'objets. |
 | `valueInputOption` | chaîne | Non | Le format des données à ajouter |
 | `insertDataOption` | chaîne | Non | Comment insérer les données \(OVERWRITE ou INSERT_ROWS\) |
-| `includeValuesInResponse` | booléen | Non | Indique si les valeurs ajoutées doivent être incluses dans la réponse |
+| `includeValuesInResponse` | booléen | Non | Indique s'il faut inclure les valeurs ajoutées dans la réponse |
 
 #### Sortie
 

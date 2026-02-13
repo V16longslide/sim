@@ -1,5 +1,87 @@
+import {
+  createMockRequest,
+  mockAuth,
+  mockCryptoUuid,
+  mockUuid,
+  setupCommonApiMocks,
+} from '@sim/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMockRequest, setupFileApiMocks } from '@/app/api/__test-utils__/utils'
+
+/** Setup file API mocks for file delete tests */
+function setupFileApiMocks(
+  options: {
+    authenticated?: boolean
+    storageProvider?: 's3' | 'blob' | 'local'
+    cloudEnabled?: boolean
+  } = {}
+) {
+  const { authenticated = true, storageProvider = 's3', cloudEnabled = true } = options
+
+  setupCommonApiMocks()
+  mockUuid()
+  mockCryptoUuid()
+
+  const authMocks = mockAuth()
+  if (authenticated) {
+    authMocks.setAuthenticated()
+  } else {
+    authMocks.setUnauthenticated()
+  }
+
+  vi.doMock('@/lib/auth/hybrid', () => ({
+    checkSessionOrInternalAuth: vi.fn().mockResolvedValue({
+      success: authenticated,
+      userId: authenticated ? 'test-user-id' : undefined,
+      error: authenticated ? undefined : 'Unauthorized',
+    }),
+  }))
+
+  vi.doMock('@/app/api/files/authorization', () => ({
+    verifyFileAccess: vi.fn().mockResolvedValue(true),
+    verifyWorkspaceFileAccess: vi.fn().mockResolvedValue(true),
+  }))
+
+  const uploadFileMock = vi.fn().mockResolvedValue({
+    path: '/api/files/serve/test-key.txt',
+    key: 'test-key.txt',
+    name: 'test.txt',
+    size: 100,
+    type: 'text/plain',
+  })
+  const downloadFileMock = vi.fn().mockResolvedValue(Buffer.from('test content'))
+  const deleteFileMock = vi.fn().mockResolvedValue(undefined)
+  const hasCloudStorageMock = vi.fn().mockReturnValue(cloudEnabled)
+
+  vi.doMock('@/lib/uploads', () => ({
+    getStorageProvider: vi.fn().mockReturnValue(storageProvider),
+    isUsingCloudStorage: vi.fn().mockReturnValue(cloudEnabled),
+    StorageService: {
+      uploadFile: uploadFileMock,
+      downloadFile: downloadFileMock,
+      deleteFile: deleteFileMock,
+      hasCloudStorage: hasCloudStorageMock,
+    },
+    uploadFile: uploadFileMock,
+    downloadFile: downloadFileMock,
+    deleteFile: deleteFileMock,
+    hasCloudStorage: hasCloudStorageMock,
+  }))
+
+  vi.doMock('@/lib/uploads/core/storage-service', () => ({
+    uploadFile: uploadFileMock,
+    downloadFile: downloadFileMock,
+    deleteFile: deleteFileMock,
+    hasCloudStorage: hasCloudStorageMock,
+  }))
+
+  vi.doMock('fs/promises', () => ({
+    unlink: vi.fn().mockResolvedValue(undefined),
+    access: vi.fn().mockResolvedValue(undefined),
+    stat: vi.fn().mockResolvedValue({ isFile: () => true }),
+  }))
+
+  return { auth: authMocks }
+}
 
 describe('File Delete API Route', () => {
   beforeEach(() => {
@@ -18,7 +100,7 @@ describe('File Delete API Route', () => {
     })
 
     const req = createMockRequest('POST', {
-      filePath: '/api/files/serve/test-file.txt',
+      filePath: '/api/files/serve/workspace/test-workspace-id/test-file.txt',
     })
 
     const { POST } = await import('@/app/api/files/delete/route')
@@ -39,7 +121,7 @@ describe('File Delete API Route', () => {
     })
 
     const req = createMockRequest('POST', {
-      filePath: '/api/files/serve/nonexistent.txt',
+      filePath: '/api/files/serve/workspace/test-workspace-id/nonexistent.txt',
     })
 
     const { POST } = await import('@/app/api/files/delete/route')
@@ -58,20 +140,8 @@ describe('File Delete API Route', () => {
       storageProvider: 's3',
     })
 
-    vi.doMock('@/lib/uploads', () => ({
-      deleteFile: vi.fn().mockResolvedValue(undefined),
-      isUsingCloudStorage: vi.fn().mockReturnValue(true),
-      uploadFile: vi.fn().mockResolvedValue({
-        path: '/api/files/serve/test-key',
-        key: 'test-key',
-        name: 'test.txt',
-        size: 100,
-        type: 'text/plain',
-      }),
-    }))
-
     const req = createMockRequest('POST', {
-      filePath: '/api/files/serve/s3/1234567890-test-file.txt',
+      filePath: '/api/files/serve/workspace/test-workspace-id/1234567890-test-file.txt',
     })
 
     const { POST } = await import('@/app/api/files/delete/route')
@@ -81,10 +151,13 @@ describe('File Delete API Route', () => {
 
     expect(response.status).toBe(200)
     expect(data).toHaveProperty('success', true)
-    expect(data).toHaveProperty('message', 'File deleted successfully from cloud storage')
+    expect(data).toHaveProperty('message', 'File deleted successfully')
 
-    const uploads = await import('@/lib/uploads')
-    expect(uploads.deleteFile).toHaveBeenCalledWith('1234567890-test-file.txt')
+    const storageService = await import('@/lib/uploads/core/storage-service')
+    expect(storageService.deleteFile).toHaveBeenCalledWith({
+      key: 'workspace/test-workspace-id/1234567890-test-file.txt',
+      context: 'workspace',
+    })
   })
 
   it('should handle Azure Blob file deletion successfully', async () => {
@@ -93,20 +166,8 @@ describe('File Delete API Route', () => {
       storageProvider: 'blob',
     })
 
-    vi.doMock('@/lib/uploads', () => ({
-      deleteFile: vi.fn().mockResolvedValue(undefined),
-      isUsingCloudStorage: vi.fn().mockReturnValue(true),
-      uploadFile: vi.fn().mockResolvedValue({
-        path: '/api/files/serve/test-key',
-        key: 'test-key',
-        name: 'test.txt',
-        size: 100,
-        type: 'text/plain',
-      }),
-    }))
-
     const req = createMockRequest('POST', {
-      filePath: '/api/files/serve/blob/1234567890-test-document.pdf',
+      filePath: '/api/files/serve/workspace/test-workspace-id/1234567890-test-document.pdf',
     })
 
     const { POST } = await import('@/app/api/files/delete/route')
@@ -116,10 +177,13 @@ describe('File Delete API Route', () => {
 
     expect(response.status).toBe(200)
     expect(data).toHaveProperty('success', true)
-    expect(data).toHaveProperty('message', 'File deleted successfully from cloud storage')
+    expect(data).toHaveProperty('message', 'File deleted successfully')
 
-    const uploads = await import('@/lib/uploads')
-    expect(uploads.deleteFile).toHaveBeenCalledWith('1234567890-test-document.pdf')
+    const storageService = await import('@/lib/uploads/core/storage-service')
+    expect(storageService.deleteFile).toHaveBeenCalledWith({
+      key: 'workspace/test-workspace-id/1234567890-test-document.pdf',
+      context: 'workspace',
+    })
   })
 
   it('should handle missing file path', async () => {

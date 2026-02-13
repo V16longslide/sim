@@ -6,6 +6,7 @@
  * This file contains unit tests for the knowledge base utility functions,
  * including access checks, document processing, and embedding generation.
  */
+import { createEnvMock } from '@sim/testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('drizzle-orm', () => ({
@@ -15,11 +16,7 @@ vi.mock('drizzle-orm', () => ({
   sql: (strings: TemplateStringsArray, ...expr: any[]) => ({ strings, expr }),
 }))
 
-vi.mock('@/lib/env', () => ({
-  env: { OPENAI_API_KEY: 'test-key' },
-  isTruthy: (value: string | boolean | number | undefined) =>
-    typeof value === 'string' ? value === 'true' || value === '1' : Boolean(value),
-}))
+vi.mock('@/lib/core/config/env', () => createEnvMock({ OPENAI_API_KEY: 'test-key' }))
 
 vi.mock('@/lib/knowledge/documents/utils', () => ({
   retryWithExponentialBackoff: (fn: any) => fn(),
@@ -116,14 +113,41 @@ vi.mock('@sim/db', () => {
   return {
     db: {
       select: vi.fn(() => selectBuilder),
-      update: () => ({
-        set: () => ({
-          where: () => Promise.resolve(),
+      update: (table: any) => ({
+        set: (payload: any) => ({
+          where: () => {
+            const tableSymbols = Object.getOwnPropertySymbols(table || {})
+            const baseNameSymbol = tableSymbols.find((s) => s.toString().includes('BaseName'))
+            const tableName = baseNameSymbol ? table[baseNameSymbol] : ''
+            if (tableName === 'knowledge_base') {
+              dbOps.order.push('updateKb')
+              dbOps.updatePayloads.push(payload)
+            } else if (tableName === 'document') {
+              if (payload.processingStatus !== 'processing') {
+                dbOps.order.push('updateDoc')
+                dbOps.updatePayloads.push(payload)
+              }
+            }
+            return Promise.resolve()
+          },
         }),
+      }),
+      delete: () => ({
+        where: () => Promise.resolve(),
+      }),
+      insert: () => ({
+        values: (records: any) => {
+          dbOps.order.push('insert')
+          dbOps.insertRecords.push(records)
+          return Promise.resolve()
+        },
       }),
       transaction: vi.fn(async (fn: any) => {
         await fn({
-          insert: (table: any) => ({
+          delete: () => ({
+            where: () => Promise.resolve(),
+          }),
+          insert: () => ({
             values: (records: any) => {
               dbOps.order.push('insert')
               dbOps.insertRecords.push(records)
@@ -134,7 +158,7 @@ vi.mock('@sim/db', () => {
             set: (payload: any) => ({
               where: () => {
                 dbOps.updatePayloads.push(payload)
-                const label = dbOps.updatePayloads.length === 1 ? 'updateDoc' : 'updateKb'
+                const label = payload.processingStatus !== undefined ? 'updateDoc' : 'updateKb'
                 dbOps.order.push(label)
                 return Promise.resolve()
               },
@@ -149,8 +173,8 @@ vi.mock('@sim/db', () => {
   }
 })
 
-import { generateEmbeddings } from '@/lib/embeddings/utils'
 import { processDocumentAsync } from '@/lib/knowledge/documents/service'
+import { generateEmbeddings } from '@/lib/knowledge/embeddings'
 import {
   checkChunkAccess,
   checkDocumentAccess,
@@ -168,6 +192,14 @@ describe('Knowledge Utils', () => {
 
   describe('processDocumentAsync', () => {
     it.concurrent('should insert embeddings before updating document counters', async () => {
+      kbRows.push({
+        id: 'kb1',
+        userId: 'user1',
+        workspaceId: null,
+        chunkingConfig: { maxSize: 1024, minSize: 1, overlap: 200 },
+      })
+      docRows.push({ id: 'doc1', knowledgeBaseId: 'kb1' })
+
       await processDocumentAsync(
         'kb1',
         'doc1',
@@ -254,7 +286,7 @@ describe('Knowledge Utils', () => {
     })
 
     it('should use Azure OpenAI when Azure config is provided', async () => {
-      const { env } = await import('@/lib/env')
+      const { env } = await import('@/lib/core/config/env')
       Object.keys(env).forEach((key) => delete (env as any)[key])
       Object.assign(env, {
         AZURE_OPENAI_API_KEY: 'test-azure-key',
@@ -287,7 +319,7 @@ describe('Knowledge Utils', () => {
     })
 
     it('should fallback to OpenAI when no Azure config provided', async () => {
-      const { env } = await import('@/lib/env')
+      const { env } = await import('@/lib/core/config/env')
       Object.keys(env).forEach((key) => delete (env as any)[key])
       Object.assign(env, {
         OPENAI_API_KEY: 'test-openai-key',
@@ -316,7 +348,7 @@ describe('Knowledge Utils', () => {
     })
 
     it('should throw error when no API configuration provided', async () => {
-      const { env } = await import('@/lib/env')
+      const { env } = await import('@/lib/core/config/env')
       Object.keys(env).forEach((key) => delete (env as any)[key])
 
       await expect(generateEmbeddings(['test text'])).rejects.toThrow(

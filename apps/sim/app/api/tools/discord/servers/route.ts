@@ -1,5 +1,7 @@
-import { NextResponse } from 'next/server'
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
+import { type NextRequest, NextResponse } from 'next/server'
+import { checkInternalAuth } from '@/lib/auth/hybrid'
+import { validateNumericId } from '@/lib/core/security/input-validation'
 
 interface DiscordServer {
   id: string
@@ -11,7 +13,12 @@ export const dynamic = 'force-dynamic'
 
 const logger = createLogger('DiscordServersAPI')
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const auth = await checkInternalAuth(request)
+  if (!auth.success || !auth.userId) {
+    return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const { botToken, serverId } = await request.json()
 
@@ -20,11 +27,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Bot token is required' }, { status: 400 })
     }
 
-    // If serverId is provided, we'll fetch just that server
     if (serverId) {
+      const serverIdValidation = validateNumericId(serverId, 'serverId')
+      if (!serverIdValidation.isValid) {
+        logger.error(`Invalid server ID: ${serverIdValidation.error}`)
+        return NextResponse.json({ error: serverIdValidation.error }, { status: 400 })
+      }
+
       logger.info(`Fetching single Discord server: ${serverId}`)
 
-      // Fetch a specific server by ID
       const response = await fetch(`https://discord.com/api/v10/guilds/${serverId}`, {
         method: 'GET',
         headers: {
@@ -64,10 +75,6 @@ export async function POST(request: Request) {
       })
     }
 
-    // Listing guilds via REST requires a user OAuth2 access token with the 'guilds' scope.
-    // A bot token cannot call /users/@me/guilds and will return 401.
-    // Since this selector only has a bot token, return an empty list instead of erroring
-    // and let users provide a Server ID in advanced mode.
     logger.info(
       'Skipping guild listing: bot token cannot list /users/@me/guilds; returning empty list'
     )

@@ -10,7 +10,6 @@ export const notionWriteTool: ToolConfig<NotionWriteParams, NotionResponse> = {
   oauth: {
     required: true,
     provider: 'notion',
-    additionalScopes: ['workspace.content', 'page.write'],
   },
 
   params: {
@@ -23,8 +22,8 @@ export const notionWriteTool: ToolConfig<NotionWriteParams, NotionResponse> = {
     pageId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the Notion page to append content to',
+      visibility: 'user-or-llm',
+      description: 'The UUID of the Notion page to append content to',
     },
     content: {
       type: 'string',
@@ -36,9 +35,7 @@ export const notionWriteTool: ToolConfig<NotionWriteParams, NotionResponse> = {
 
   request: {
     url: (params: NotionWriteParams) => {
-      // Format page ID with hyphens if needed
-      const formattedId = params.pageId.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5')
-      return `https://api.notion.com/v1/blocks/${formattedId}/children`
+      return `https://api.notion.com/v1/blocks/${params.pageId}/children`
     },
     method: 'PATCH',
     headers: (params: NotionWriteParams) => {
@@ -88,5 +85,37 @@ export const notionWriteTool: ToolConfig<NotionWriteParams, NotionResponse> = {
       type: 'string',
       description: 'Success message confirming content was appended to page',
     },
+  },
+}
+
+// V2 Tool with API-aligned outputs
+interface NotionWriteV2Response {
+  success: boolean
+  output: {
+    appended: boolean
+  }
+}
+
+export const notionWriteV2Tool: ToolConfig<NotionWriteParams, NotionWriteV2Response> = {
+  id: 'notion_write_v2',
+  name: 'Notion Content Appender',
+  description: 'Append content to a Notion page',
+  version: '2.0.0',
+  oauth: notionWriteTool.oauth,
+  params: notionWriteTool.params,
+  request: notionWriteTool.request,
+
+  transformResponse: async (response: Response) => {
+    await response.json()
+    return {
+      success: response.ok,
+      output: {
+        appended: response.ok,
+      },
+    }
+  },
+
+  outputs: {
+    appended: { type: 'boolean', description: 'Whether content was successfully appended' },
   },
 }

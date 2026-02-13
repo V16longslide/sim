@@ -1,21 +1,50 @@
 import { NextResponse } from 'next/server'
+import { DEFAULT_EXECUTION_TIMEOUT_MS } from '@/lib/core/execution-limits'
 import type { McpApiResponse } from '@/lib/mcp/types'
+import { isMcpTool, MCP } from '@/executor/constants'
 
-/**
- * MCP-specific constants
- */
 export const MCP_CONSTANTS = {
-  EXECUTION_TIMEOUT: 60000,
+  EXECUTION_TIMEOUT: DEFAULT_EXECUTION_TIMEOUT_MS,
   CACHE_TIMEOUT: 5 * 60 * 1000,
   DEFAULT_RETRIES: 3,
   DEFAULT_CONNECTION_TIMEOUT: 30000,
+  MAX_CACHE_SIZE: 1000,
+  MAX_CONSECUTIVE_FAILURES: 3,
 } as const
 
 /**
- * Client-safe MCP constants
+ * Core MCP tool parameter keys that are metadata, not user-entered test values.
+ * These should be preserved when cleaning up params during schema updates.
  */
+export const MCP_TOOL_CORE_PARAMS = new Set(['serverId', 'serverUrl', 'toolName', 'serverName'])
+
+/**
+ * Sanitizes a string by removing invisible Unicode characters that cause HTTP header errors.
+ * Handles characters like U+2028 (Line Separator) that can be introduced via copy-paste.
+ */
+export function sanitizeForHttp(value: string): string {
+  return value
+    .replace(/[\u2028\u2029\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .trim()
+}
+
+/**
+ * Sanitizes all header key-value pairs for HTTP usage.
+ */
+export function sanitizeHeaders(
+  headers: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!headers) return headers
+  return Object.fromEntries(
+    Object.entries(headers)
+      .map(([key, value]) => [sanitizeForHttp(key), sanitizeForHttp(value)])
+      .filter(([key, value]) => key !== '' && value !== '')
+  )
+}
+
 export const MCP_CLIENT_CONSTANTS = {
-  CLIENT_TIMEOUT: 60000,
+  CLIENT_TIMEOUT: DEFAULT_EXECUTION_TIMEOUT_MS,
   AUTO_REFRESH_INTERVAL: 5 * 60 * 1000,
 } as const
 
@@ -122,7 +151,7 @@ export function categorizeError(error: unknown): { message: string; status: numb
  * Create standardized MCP tool ID from server ID and tool name
  */
 export function createMcpToolId(serverId: string, toolName: string): string {
-  const normalizedServerId = serverId.startsWith('mcp-') ? serverId : `mcp-${serverId}`
+  const normalizedServerId = isMcpTool(serverId) ? serverId : `${MCP.TOOL_PREFIX}${serverId}`
   return `${normalizedServerId}-${toolName}`
 }
 
@@ -139,4 +168,52 @@ export function parseMcpToolId(toolId: string): { serverId: string; toolName: st
   const toolName = parts.slice(2).join('-')
 
   return { serverId, toolName }
+}
+
+/**
+ * Generate a deterministic MCP server ID based on workspace and URL.
+ *
+ * This ensures that re-adding the same MCP server (same URL in the same workspace)
+ * produces the same ID, preventing "server not found" errors when workflows
+ * reference the old server ID.
+ *
+ * The ID is a hash of: workspaceId + normalized URL
+ * Format: mcp-<8 char hash>
+ */
+export function generateMcpServerId(workspaceId: string, url: string): string {
+  const normalizedUrl = normalizeUrlForHashing(url)
+
+  const input = `${workspaceId}:${normalizedUrl}`
+  const hash = simpleHash(input)
+
+  return `mcp-${hash}`
+}
+
+/**
+ * Normalize URL for consistent hashing.
+ * - Converts to lowercase
+ * - Removes trailing slashes
+ * - Removes query parameters and fragments
+ */
+function normalizeUrlForHashing(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const normalized = `${parsed.origin}${parsed.pathname}`.toLowerCase().replace(/\/+$/, '')
+    return normalized
+  } catch {
+    return url.toLowerCase().trim().replace(/\/+$/, '')
+  }
+}
+
+/**
+ * Simple deterministic hash function that produces an 8-character hex string.
+ * Uses a variant of djb2 hash algorithm.
+ */
+function simpleHash(str: string): string {
+  let hash = 5381
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) + hash + str.charCodeAt(i)
+    hash = hash >>> 0
+  }
+  return hash.toString(16).padStart(8, '0').slice(0, 8)
 }

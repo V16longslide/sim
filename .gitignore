@@ -46,7 +46,7 @@ sim-standalone.tar.gz
 next-env.d.ts
 
 # cursorrules
-.cursorrules
+# .cursorrules
 
 # docs
 /apps/docs/.source
@@ -66,6 +66,9 @@ start-collector.sh
 
 # VSCode
 .vscode
+
+# IntelliJ
+.idea
 
 ## Helm Chart Tests
 helm/sim/test

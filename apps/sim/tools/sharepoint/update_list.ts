@@ -1,4 +1,4 @@
-import { createLogger } from '@/lib/logs/console/logger'
+import { createLogger } from '@sim/logger'
 import type {
   SharepointToolParams,
   SharepointUpdateListItemResponse,
@@ -19,7 +19,6 @@ export const updateListItemTool: ToolConfig<
   oauth: {
     required: true,
     provider: 'sharepoint',
-    additionalScopes: ['openid', 'profile', 'email', 'Sites.ReadWrite.All', 'offline_access'],
   },
 
   params: {
@@ -44,14 +43,15 @@ export const updateListItemTool: ToolConfig<
     listId: {
       type: 'string',
       required: false,
-      visibility: 'user-only',
-      description: 'The ID of the list containing the item',
+      visibility: 'user-or-llm',
+      description:
+        'The ID of the list containing the item. Example: b!abc123def456 or a GUID like 12345678-1234-1234-1234-123456789012',
     },
     itemId: {
       type: 'string',
       required: true,
-      visibility: 'user-only',
-      description: 'The ID of the list item to update',
+      visibility: 'user-or-llm',
+      description: 'The ID of the list item to update. Example: 1, 42, or 123',
     },
     listItemFields: {
       type: 'object',

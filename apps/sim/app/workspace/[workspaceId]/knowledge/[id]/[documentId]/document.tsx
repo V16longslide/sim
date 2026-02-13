@@ -1,28 +1,61 @@
 'use client'
 
-import { Suspense, startTransition, useCallback, useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Circle, CircleOff, FileText, Plus, Trash2 } from 'lucide-react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { createLogger } from '@sim/logger'
+import { useQueryClient } from '@tanstack/react-query'
 import {
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  CircleOff,
+  FileText,
+  Loader2,
+  Search,
+  X,
+} from 'lucide-react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import {
+  Badge,
+  Breadcrumb,
   Button,
   Checkbox,
-  SearchHighlight,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui'
-import { createLogger } from '@/lib/logs/console/logger'
+  Trash,
+} from '@/components/emcn'
+import { Input } from '@/components/ui/input'
+import { SearchHighlight } from '@/components/ui/search-highlight'
+import { Skeleton } from '@/components/ui/skeleton'
+import { formatAbsoluteDate, formatRelativeTime } from '@/lib/core/utils/formatting'
+import type { ChunkData } from '@/lib/knowledge/types'
 import {
+  ChunkContextMenu,
   CreateChunkModal,
   DeleteChunkModal,
-  DocumentLoading,
+  DocumentTagsModal,
   EditChunkModal,
 } from '@/app/workspace/[workspaceId]/knowledge/[id]/[documentId]/components'
 import { ActionBar } from '@/app/workspace/[workspaceId]/knowledge/[id]/components'
-import { KnowledgeHeader, SearchInput } from '@/app/workspace/[workspaceId]/knowledge/components'
 import { useUserPermissionsContext } from '@/app/workspace/[workspaceId]/providers/workspace-permissions-provider'
-import { useDocumentChunks } from '@/hooks/use-knowledge'
-import { type ChunkData, type DocumentData, useKnowledgeStore } from '@/stores/knowledge/store'
+import { useContextMenu } from '@/app/workspace/[workspaceId]/w/components/sidebar/hooks'
+import { useDocument, useDocumentChunks, useKnowledgeBase } from '@/hooks/kb/use-knowledge'
+import {
+  knowledgeKeys,
+  useBulkChunkOperation,
+  useDeleteDocument,
+  useDocumentChunkSearchQuery,
+  useUpdateChunk,
+} from '@/hooks/queries/knowledge'
 
 const logger = createLogger('Document')
 
@@ -33,15 +66,170 @@ interface DocumentProps {
   documentName?: string
 }
 
-function getStatusBadgeStyles(enabled: boolean) {
-  return enabled
-    ? 'inline-flex items-center rounded-md bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-    : 'inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+function truncateContent(content: string, maxLength = 150, searchQuery = ''): string {
+  if (content.length <= maxLength) return content
+
+  if (searchQuery.trim()) {
+    const searchTerms = searchQuery
+      .trim()
+      .split(/\s+/)
+      .filter((term) => term.length > 0)
+      .map((term) => term.toLowerCase())
+
+    for (const term of searchTerms) {
+      const matchIndex = content.toLowerCase().indexOf(term)
+      if (matchIndex !== -1) {
+        const contextBefore = 30
+        const start = Math.max(0, matchIndex - contextBefore)
+        const end = Math.min(content.length, start + maxLength)
+
+        let result = content.substring(start, end)
+        if (start > 0) result = `...${result}`
+        if (end < content.length) result = `${result}...`
+        return result
+      }
+    }
+  }
+
+  return `${content.substring(0, maxLength)}...`
 }
 
-function truncateContent(content: string, maxLength = 150): string {
-  if (content.length <= maxLength) return content
-  return `${content.substring(0, maxLength)}...`
+function ChunkTableRowSkeleton() {
+  return (
+    <TableRow className='hover:bg-transparent'>
+      <TableCell className='w-[52px] py-[8px]' style={{ paddingLeft: '20.5px', paddingRight: 0 }}>
+        <div className='flex items-center'>
+          <Skeleton className='h-[14px] w-[14px] rounded-[2px]' />
+        </div>
+      </TableCell>
+      <TableCell className='w-[60px] py-[8px] pr-[12px] pl-[15px]'>
+        <Skeleton className='h-[21px] w-[24px]' />
+      </TableCell>
+      <TableCell className='px-[12px] py-[8px]'>
+        <Skeleton className='h-[21px] w-full' />
+      </TableCell>
+      <TableCell className='w-[8%] px-[12px] py-[8px]'>
+        <Skeleton className='h-[18px] w-[32px]' />
+      </TableCell>
+      <TableCell className='w-[12%] px-[12px] py-[8px]'>
+        <Skeleton className='h-[24px] w-[64px] rounded-md' />
+      </TableCell>
+      <TableCell className='w-[14%] py-[8px] pr-[4px] pl-[12px]'>
+        <div className='flex items-center gap-[4px]'>
+          <Skeleton className='h-[28px] w-[28px] rounded-[4px]' />
+          <Skeleton className='h-[28px] w-[28px] rounded-[4px]' />
+        </div>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function ChunkTableSkeleton({ rowCount = 8 }: { rowCount?: number }) {
+  return (
+    <Table className='min-w-[700px] table-fixed text-[13px]'>
+      <TableHeader>
+        <TableRow className='hover:bg-transparent'>
+          <TableHead
+            className='w-[52px] py-[8px]'
+            style={{ paddingLeft: '20.5px', paddingRight: 0 }}
+          >
+            <div className='flex items-center'>
+              <Skeleton className='h-[14px] w-[14px] rounded-[2px]' />
+            </div>
+          </TableHead>
+          <TableHead className='w-[60px] py-[8px] pr-[12px] pl-[15px] text-[12px] text-[var(--text-secondary)]'>
+            Index
+          </TableHead>
+          <TableHead className='px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+            Content
+          </TableHead>
+          <TableHead className='w-[8%] px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+            Tokens
+          </TableHead>
+          <TableHead className='w-[12%] px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+            Status
+          </TableHead>
+          <TableHead className='w-[14%] py-[8px] pr-[4px] pl-[12px] text-[12px] text-[var(--text-secondary)]'>
+            Actions
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {Array.from({ length: rowCount }).map((_, i) => (
+          <ChunkTableRowSkeleton key={i} />
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+interface DocumentLoadingProps {
+  knowledgeBaseId: string
+  knowledgeBaseName: string
+  documentName: string
+}
+
+function DocumentLoading({
+  knowledgeBaseId,
+  knowledgeBaseName,
+  documentName,
+}: DocumentLoadingProps) {
+  const { workspaceId } = useParams()
+
+  const breadcrumbItems = [
+    { label: 'Knowledge Base', href: `/workspace/${workspaceId}/knowledge` },
+    {
+      label: knowledgeBaseName,
+      href: `/workspace/${workspaceId}/knowledge/${knowledgeBaseId}`,
+    },
+    { label: documentName },
+  ]
+
+  return (
+    <div className='flex h-full flex-1 flex-col'>
+      <div className='flex flex-1 overflow-hidden'>
+        <div className='flex flex-1 flex-col overflow-auto bg-white px-[24px] pt-[24px] pb-[24px] dark:bg-[var(--bg)]'>
+          <Breadcrumb items={breadcrumbItems} />
+
+          <div className='mt-[14px] flex items-center justify-between'>
+            <Skeleton className='h-[27px] w-[200px] rounded-[4px]' />
+            <div className='flex items-center gap-2'>
+              <Skeleton className='h-[32px] w-[52px] rounded-[6px]' />
+              <Skeleton className='h-[32px] w-[32px] rounded-[6px]' />
+            </div>
+          </div>
+
+          <div className='mt-[4px]'>
+            <Skeleton className='h-[21px] w-[80px] rounded-[4px]' />
+          </div>
+
+          <div className='mt-[16px] flex items-center gap-[8px]'>
+            <Skeleton className='h-[21px] w-[80px] rounded-[4px]' />
+            <div className='mb-[-1.5px] h-[18px] w-[1.25px] rounded-full bg-[#3A3A3A]' />
+            <Skeleton className='h-[21px] w-[140px] rounded-[4px]' />
+          </div>
+
+          <div className='mt-[14px] flex items-center justify-between'>
+            <div className='flex h-[32px] w-[400px] items-center gap-[6px] rounded-[8px] bg-[var(--surface-3)] px-[8px] dark:bg-[var(--surface-4)]'>
+              <Search className='h-[14px] w-[14px] text-[var(--text-subtle)]' />
+              <Input
+                placeholder='Search chunks...'
+                disabled
+                className='flex-1 border-0 bg-transparent px-0 font-medium text-[var(--text-secondary)] text-small leading-none placeholder:text-[var(--text-subtle)] focus-visible:ring-0 focus-visible:ring-offset-0'
+              />
+            </div>
+            <Button disabled variant='tertiary' className='h-[32px] rounded-[6px]'>
+              Create Chunk
+            </Button>
+          </div>
+
+          <div className='mt-[12px] flex flex-1 flex-col overflow-hidden'>
+            <ChunkTableSkeleton rowCount={8} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function Document({
@@ -50,22 +238,25 @@ export function Document({
   knowledgeBaseName,
   documentName,
 }: DocumentProps) {
-  const {
-    getCachedKnowledgeBase,
-    getCachedDocuments,
-    updateDocument: updateDocumentInStore,
-  } = useKnowledgeStore()
+  const queryClient = useQueryClient()
   const { workspaceId } = useParams()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const currentPageFromURL = Number.parseInt(searchParams.get('page') || '1', 10)
   const userPermissions = useUserPermissionsContext()
 
-  // Search state management
+  const { knowledgeBase } = useKnowledgeBase(knowledgeBaseId)
+  const {
+    document: documentData,
+    isLoading: isLoadingDocument,
+    error: documentError,
+  } = useDocument(knowledgeBaseId, documentId)
+
+  const [showTagsModal, setShowTagsModal] = useState(false)
+
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
-  const [isSearching, setIsSearching] = useState(false)
 
-  // Load initial chunks (no search) for immediate display
   const {
     chunks: initialChunks,
     currentPage: initialPage,
@@ -76,86 +267,34 @@ export function Document({
     error: initialError,
     refreshChunks: initialRefreshChunks,
     updateChunk: initialUpdateChunk,
-  } = useDocumentChunks(knowledgeBaseId, documentId, currentPageFromURL, '', {
-    enableClientSearch: false,
-  })
+    isFetching: isFetchingChunks,
+  } = useDocumentChunks(knowledgeBaseId, documentId, currentPageFromURL)
 
-  // Search results state
-  const [searchResults, setSearchResults] = useState<ChunkData[]>([])
-  const [isLoadingSearch, setIsLoadingSearch] = useState(false)
-  const [searchError, setSearchError] = useState<string | null>(null)
-
-  // Load all search results when query changes
-  useEffect(() => {
-    if (!debouncedSearchQuery.trim()) {
-      setSearchResults([])
-      setSearchError(null)
-      return
+  const {
+    data: searchResults = [],
+    isLoading: isLoadingSearch,
+    error: searchQueryError,
+  } = useDocumentChunkSearchQuery(
+    {
+      knowledgeBaseId,
+      documentId,
+      search: debouncedSearchQuery,
+    },
+    {
+      enabled: Boolean(debouncedSearchQuery.trim()),
     }
+  )
 
-    let isMounted = true
-
-    const searchAllChunks = async () => {
-      try {
-        setIsLoadingSearch(true)
-        setSearchError(null)
-
-        const allResults: ChunkData[] = []
-        let hasMore = true
-        let offset = 0
-        const limit = 100 // Larger batches for search
-
-        while (hasMore && isMounted) {
-          const response = await fetch(
-            `/api/knowledge/${knowledgeBaseId}/documents/${documentId}/chunks?search=${encodeURIComponent(debouncedSearchQuery)}&limit=${limit}&offset=${offset}`
-          )
-
-          if (!response.ok) {
-            throw new Error('Search failed')
-          }
-
-          const result = await response.json()
-
-          if (result.success && result.data) {
-            allResults.push(...result.data)
-            hasMore = result.pagination?.hasMore || false
-            offset += limit
-          } else {
-            hasMore = false
-          }
-        }
-
-        if (isMounted) {
-          setSearchResults(allResults)
-        }
-      } catch (err) {
-        if (isMounted) {
-          setSearchError(err instanceof Error ? err.message : 'Search failed')
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingSearch(false)
-        }
-      }
-    }
-
-    searchAllChunks()
-
-    return () => {
-      isMounted = false
-    }
-  }, [debouncedSearchQuery, knowledgeBaseId, documentId])
+  const searchError = searchQueryError instanceof Error ? searchQueryError.message : null
 
   const [selectedChunks, setSelectedChunks] = useState<Set<string>>(new Set())
   const [selectedChunk, setSelectedChunk] = useState<ChunkData | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
 
-  // Debounce search query with 200ms delay for optimal UX
   useEffect(() => {
     const handler = setTimeout(() => {
       startTransition(() => {
         setDebouncedSearchQuery(searchQuery)
-        setIsSearching(searchQuery.trim().length > 0)
       })
     }, 200)
 
@@ -164,12 +303,8 @@ export function Document({
     }
   }, [searchQuery])
 
-  // Determine which data to show
+  const isSearching = debouncedSearchQuery.trim().length > 0
   const showingSearch = isSearching && searchQuery.trim().length > 0 && searchResults.length > 0
-
-  // Removed unused allDisplayChunks variable
-
-  // Client-side pagination for search results
   const SEARCH_PAGE_SIZE = 50
   const maxSearchPages = Math.ceil(searchResults.length / SEARCH_PAGE_SIZE)
   const searchCurrentPage =
@@ -191,7 +326,6 @@ export function Document({
 
   const goToPage = useCallback(
     async (page: number) => {
-      // Update URL first for both modes
       const params = new URLSearchParams(window.location.search)
       if (page > 1) {
         params.set('page', page.toString())
@@ -201,10 +335,8 @@ export function Document({
       window.history.replaceState(null, '', `?${params.toString()}`)
 
       if (showingSearch) {
-        // For search, URL update is sufficient (client-side pagination)
         return
       }
-      // For normal view, also trigger server-side pagination
       return await initialGoToPage(page)
     },
     [showingSearch, initialGoToPage]
@@ -225,219 +357,31 @@ export function Document({
   const refreshChunks = showingSearch ? async () => {} : initialRefreshChunks
   const updateChunk = showingSearch ? (id: string, updates: any) => {} : initialUpdateChunk
 
-  const [documentData, setDocumentData] = useState<DocumentData | null>(null)
-  const [isLoadingDocument, setIsLoadingDocument] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
   const [isCreateChunkModalOpen, setIsCreateChunkModalOpen] = useState(false)
   const [chunkToDelete, setChunkToDelete] = useState<ChunkData | null>(null)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
-  const [isBulkOperating, setIsBulkOperating] = useState(false)
+  const [showDeleteDocumentDialog, setShowDeleteDocumentDialog] = useState(false)
+  const [contextMenuChunk, setContextMenuChunk] = useState<ChunkData | null>(null)
 
-  const combinedError = error || searchError || initialError
+  const { mutate: updateChunkMutation } = useUpdateChunk()
+  const { mutate: deleteDocumentMutation, isPending: isDeletingDocument } = useDeleteDocument()
+  const { mutate: bulkChunkMutation, isPending: isBulkOperating } = useBulkChunkOperation()
 
-  // Render chunks with proper search highlighting
-  const renderChunks = () => {
-    if (documentData?.processingStatus !== 'completed') {
-      return (
-        <tr className='border-b transition-colors'>
-          <td className='px-4 py-3'>
-            <div className='h-3.5 w-3.5' />
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='flex items-center gap-2'>
-              <FileText className='h-5 w-5 text-muted-foreground' />
-              <span className='text-muted-foreground text-sm italic'>
-                {documentData?.processingStatus === 'pending' && 'Document processing pending...'}
-                {documentData?.processingStatus === 'processing' &&
-                  'Document processing in progress...'}
-                {documentData?.processingStatus === 'failed' && 'Document processing failed'}
-                {!documentData?.processingStatus && 'Document not ready'}
-              </span>
-            </div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-        </tr>
-      )
-    }
+  const {
+    isOpen: isContextMenuOpen,
+    position: contextMenuPosition,
+    menuRef,
+    handleContextMenu: baseHandleContextMenu,
+    closeMenu: closeContextMenu,
+  } = useContextMenu()
 
-    if (displayChunks.length === 0) {
-      return (
-        <tr className='border-b transition-colors hover:bg-accent/30'>
-          <td className='px-4 py-3'>
-            <div className='h-3.5 w-3.5' />
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='flex items-center gap-2'>
-              <FileText className='h-5 w-5 text-muted-foreground' />
-              <span className='text-muted-foreground text-sm italic'>
-                {searchQuery.trim() ? 'No chunks match your search' : 'No chunks found'}
-              </span>
-            </div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-          <td className='px-4 py-3'>
-            <div className='text-muted-foreground text-xs'>—</div>
-          </td>
-        </tr>
-      )
-    }
+  const combinedError = documentError || searchError || initialError
 
-    return displayChunks.map((chunk: ChunkData) => (
-      <tr
-        key={chunk.id}
-        className='cursor-pointer border-b transition-colors hover:bg-accent/30'
-        onClick={() => handleChunkClick(chunk)}
-      >
-        <td className='px-4 py-3'>
-          <Checkbox
-            checked={selectedChunks.has(chunk.id)}
-            onCheckedChange={(checked) => handleSelectChunk(chunk.id, checked as boolean)}
-            disabled={!userPermissions.canEdit}
-            aria-label={`Select chunk ${chunk.chunkIndex}`}
-            className='h-3.5 w-3.5 border-gray-300 focus-visible:ring-[var(--brand-primary-hex)]/20 data-[state=checked]:border-[var(--brand-primary-hex)] data-[state=checked]:bg-[var(--brand-primary-hex)] [&>*]:h-3 [&>*]:w-3'
-            onClick={(e) => e.stopPropagation()}
-          />
-        </td>
-        <td className='px-4 py-3'>
-          <div className='font-mono text-sm'>{chunk.chunkIndex}</div>
-        </td>
-        <td className='px-4 py-3'>
-          <div className='text-sm' title={chunk.content}>
-            <SearchHighlight text={truncateContent(chunk.content)} searchQuery={searchQuery} />
-          </div>
-        </td>
-        <td className='px-4 py-3'>
-          <div className='text-xs'>
-            {chunk.tokenCount > 1000
-              ? `${(chunk.tokenCount / 1000).toFixed(1)}k`
-              : chunk.tokenCount}
-          </div>
-        </td>
-        <td className='px-4 py-3'>
-          <div className={getStatusBadgeStyles(chunk.enabled)}>
-            <span className='font-medium'>{chunk.enabled ? 'Enabled' : 'Disabled'}</span>
-          </div>
-        </td>
-        <td className='px-4 py-3'>
-          <div className='flex items-center gap-1'>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleToggleEnabled(chunk.id)
-                  }}
-                  disabled={!userPermissions.canEdit}
-                  className='h-8 w-8 p-0 text-gray-500 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50'
-                >
-                  {chunk.enabled ? (
-                    <Circle className='h-4 w-4' />
-                  ) : (
-                    <CircleOff className='h-4 w-4' />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side='top'>
-                {chunk.enabled ? 'Disable Chunk' : 'Enable Chunk'}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleDeleteChunk(chunk.id)
-                  }}
-                  disabled={!userPermissions.canEdit}
-                  className='h-8 w-8 p-0 text-gray-500 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50'
-                >
-                  <Trash2 className='h-4 w-4' />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side='top'>Delete Chunk</TooltipContent>
-            </Tooltip>
-          </div>
-        </td>
-      </tr>
-    ))
-  }
-
-  // URL updates are handled directly in goToPage function to prevent pagination conflicts
-
-  useEffect(() => {
-    const fetchDocument = async () => {
-      try {
-        setIsLoadingDocument(true)
-        setError(null)
-
-        const cachedDocuments = getCachedDocuments(knowledgeBaseId)
-        const cachedDoc = cachedDocuments?.documents?.find((d) => d.id === documentId)
-
-        if (cachedDoc) {
-          setDocumentData(cachedDoc)
-          setIsLoadingDocument(false)
-          return
-        }
-
-        const response = await fetch(`/api/knowledge/${knowledgeBaseId}/documents/${documentId}`)
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('Document not found')
-          }
-          throw new Error(`Failed to fetch document: ${response.statusText}`)
-        }
-
-        const result = await response.json()
-
-        if (result.success) {
-          setDocumentData(result.data)
-        } else {
-          throw new Error(result.error || 'Failed to fetch document')
-        }
-      } catch (err) {
-        logger.error('Error fetching document:', err)
-        setError(err instanceof Error ? err.message : 'An error occurred')
-      } finally {
-        setIsLoadingDocument(false)
-      }
-    }
-
-    if (knowledgeBaseId && documentId) {
-      fetchDocument()
-    }
-  }, [knowledgeBaseId, documentId, getCachedDocuments])
-
-  const knowledgeBase = getCachedKnowledgeBase(knowledgeBaseId)
   const effectiveKnowledgeBaseName = knowledgeBase?.name || knowledgeBaseName || 'Knowledge Base'
   const effectiveDocumentName = documentData?.filename || documentName || 'Document'
 
-  const breadcrumbs = [
-    { label: 'Knowledge', href: `/workspace/${workspaceId}/knowledge` },
+  const breadcrumbItems = [
+    { label: 'Knowledge Base', href: `/workspace/${workspaceId}/knowledge` },
     {
       label: effectiveKnowledgeBaseName,
       href: `/workspace/${workspaceId}/knowledge/${knowledgeBaseId}`,
@@ -455,36 +399,23 @@ export function Document({
     setSelectedChunk(null)
   }
 
-  const handleToggleEnabled = async (chunkId: string) => {
+  const handleToggleEnabled = (chunkId: string) => {
     const chunk = displayChunks.find((c) => c.id === chunkId)
     if (!chunk) return
 
-    try {
-      const response = await fetch(
-        `/api/knowledge/${knowledgeBaseId}/documents/${documentId}/chunks/${chunkId}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            enabled: !chunk.enabled,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error('Failed to update chunk')
+    updateChunkMutation(
+      {
+        knowledgeBaseId,
+        documentId,
+        chunkId,
+        enabled: !chunk.enabled,
+      },
+      {
+        onSuccess: () => {
+          updateChunk(chunkId, { enabled: !chunk.enabled })
+        },
       }
-
-      const result = await response.json()
-
-      if (result.success) {
-        updateChunk(chunkId, { enabled: !chunk.enabled })
-      }
-    } catch (err) {
-      logger.error('Error updating chunk:', err)
-    }
+    )
   }
 
   const handleDeleteChunk = (chunkId: string) => {
@@ -495,8 +426,7 @@ export function Document({
     }
   }
 
-  const handleChunkDeleted = async () => {
-    await refreshChunks()
+  const handleCloseDeleteModal = () => {
     if (chunkToDelete) {
       setSelectedChunks((prev) => {
         const newSet = new Set(prev)
@@ -504,9 +434,6 @@ export function Document({
         return newSet
       })
     }
-  }
-
-  const handleCloseDeleteModal = () => {
     setIsDeleteModalOpen(false)
     setChunkToDelete(null)
   }
@@ -531,95 +458,132 @@ export function Document({
     }
   }
 
-  const handleChunkCreated = async () => {
-    // Refresh the chunks list to include the new chunk
-    await refreshChunks()
+  /**
+   * Handles deleting the document
+   */
+  const handleDeleteDocument = () => {
+    if (!documentData) return
+
+    deleteDocumentMutation(
+      { knowledgeBaseId, documentId },
+      {
+        onSuccess: () => {
+          router.push(`/workspace/${workspaceId}/knowledge/${knowledgeBaseId}`)
+        },
+      }
+    )
   }
 
-  // Shared utility function for bulk chunk operations
-  const performBulkChunkOperation = async (
+  const performBulkChunkOperation = (
     operation: 'enable' | 'disable' | 'delete',
     chunks: ChunkData[]
   ) => {
     if (chunks.length === 0) return
 
-    try {
-      setIsBulkOperating(true)
-
-      const response = await fetch(
-        `/api/knowledge/${knowledgeBaseId}/documents/${documentId}/chunks`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            operation,
-            chunkIds: chunks.map((chunk) => chunk.id),
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error(`Failed to ${operation} chunks`)
+    bulkChunkMutation(
+      {
+        knowledgeBaseId,
+        documentId,
+        operation,
+        chunkIds: chunks.map((chunk) => chunk.id),
+      },
+      {
+        onSuccess: (result) => {
+          if (operation === 'delete' || result.errorCount > 0) {
+            refreshChunks()
+          } else {
+            chunks.forEach((chunk) => {
+              updateChunk(chunk.id, { enabled: operation === 'enable' })
+            })
+          }
+          logger.info(`Successfully ${operation}d ${result.successCount} chunks`)
+          setSelectedChunks(new Set())
+        },
       }
-
-      const result = await response.json()
-
-      if (result.success) {
-        if (operation === 'delete') {
-          // Refresh chunks list to reflect deletions
-          await refreshChunks()
-        } else {
-          // Update successful chunks in the store for enable/disable operations
-          result.data.results.forEach((opResult: any) => {
-            if (opResult.operation === operation) {
-              opResult.chunkIds.forEach((chunkId: string) => {
-                updateChunk(chunkId, { enabled: operation === 'enable' })
-              })
-            }
-          })
-        }
-
-        logger.info(`Successfully ${operation}d ${result.data.successCount} chunks`)
-      }
-
-      // Clear selection after successful operation
-      setSelectedChunks(new Set())
-    } catch (err) {
-      logger.error(`Error ${operation}ing chunks:`, err)
-    } finally {
-      setIsBulkOperating(false)
-    }
+    )
   }
 
-  const handleBulkEnable = async () => {
+  const handleBulkEnable = () => {
     const chunksToEnable = displayChunks.filter(
       (chunk) => selectedChunks.has(chunk.id) && !chunk.enabled
     )
-    await performBulkChunkOperation('enable', chunksToEnable)
+    performBulkChunkOperation('enable', chunksToEnable)
   }
 
-  const handleBulkDisable = async () => {
+  const handleBulkDisable = () => {
     const chunksToDisable = displayChunks.filter(
       (chunk) => selectedChunks.has(chunk.id) && chunk.enabled
     )
-    await performBulkChunkOperation('disable', chunksToDisable)
+    performBulkChunkOperation('disable', chunksToDisable)
   }
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     const chunksToDelete = displayChunks.filter((chunk) => selectedChunks.has(chunk.id))
-    await performBulkChunkOperation('delete', chunksToDelete)
+    performBulkChunkOperation('delete', chunksToDelete)
   }
 
-  // Calculate bulk operation counts
   const selectedChunksList = displayChunks.filter((chunk) => selectedChunks.has(chunk.id))
   const enabledCount = selectedChunksList.filter((chunk) => chunk.enabled).length
   const disabledCount = selectedChunksList.filter((chunk) => !chunk.enabled).length
 
   const isAllSelected = displayChunks.length > 0 && selectedChunks.size === displayChunks.length
 
-  if (isLoadingDocument) {
+  /**
+   * Handle right-click on a chunk row
+   * If right-clicking on an unselected chunk, select only that chunk
+   * If right-clicking on a selected chunk with multiple selections, keep all selections
+   */
+  const handleChunkContextMenu = useCallback(
+    (e: React.MouseEvent, chunk: ChunkData) => {
+      const isCurrentlySelected = selectedChunks.has(chunk.id)
+
+      if (!isCurrentlySelected) {
+        setSelectedChunks(new Set([chunk.id]))
+      }
+
+      setContextMenuChunk(chunk)
+      baseHandleContextMenu(e)
+    },
+    [selectedChunks, baseHandleContextMenu]
+  )
+
+  /**
+   * Handle right-click on empty space (table container)
+   */
+  const handleEmptyContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      setContextMenuChunk(null)
+      baseHandleContextMenu(e)
+    },
+    [baseHandleContextMenu]
+  )
+
+  /**
+   * Handle context menu close
+   */
+  const handleContextMenuClose = useCallback(() => {
+    closeContextMenu()
+    setContextMenuChunk(null)
+  }, [closeContextMenu])
+
+  const handleDocumentTagsUpdate = useCallback(() => {
+    queryClient.invalidateQueries({
+      queryKey: knowledgeKeys.document(knowledgeBaseId, documentId),
+    })
+  }, [knowledgeBaseId, documentId, queryClient])
+
+  const prevDocumentIdRef = useRef<string>(documentId)
+  const isNavigatingToNewDoc = prevDocumentIdRef.current !== documentId
+
+  useEffect(() => {
+    if (documentData && documentData.id === documentId) {
+      prevDocumentIdRef.current = documentId
+    }
+  }, [documentData, documentId])
+
+  const isFetchingNewDoc = isNavigatingToNewDoc && isFetchingChunks
+
+  if (isLoadingDocument || isFetchingNewDoc) {
     return (
       <DocumentLoading
         knowledgeBaseId={knowledgeBaseId}
@@ -630,8 +594,8 @@ export function Document({
   }
 
   if (combinedError) {
-    const errorBreadcrumbs = [
-      { label: 'Knowledge', href: `/workspace/${workspaceId}/knowledge` },
+    const errorBreadcrumbItems = [
+      { label: 'Knowledge Base', href: `/workspace/${workspaceId}/knowledge` },
       {
         label: effectiveKnowledgeBaseName,
         href: `/workspace/${workspaceId}/knowledge/${knowledgeBaseId}`,
@@ -640,17 +604,20 @@ export function Document({
     ]
 
     return (
-      <div className='flex h-[100vh] flex-col pl-64'>
-        <KnowledgeHeader breadcrumbs={errorBreadcrumbs} />
-        <div className='flex flex-1 items-center justify-center'>
-          <div className='text-center'>
-            <p className='mb-2 text-red-600 text-sm'>Error: {combinedError}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className='text-blue-600 text-sm underline hover:text-blue-800'
-            >
-              Try again
-            </button>
+      <div className='flex h-full flex-1 flex-col'>
+        <div className='flex flex-1 overflow-hidden'>
+          <div className='flex flex-1 flex-col overflow-auto px-[24px] pt-[24px] pb-[24px]'>
+            <Breadcrumb items={errorBreadcrumbItems} />
+            <div className='mt-[24px]'>
+              <div className='flex h-64 items-center justify-center rounded-lg border border-muted-foreground/25 bg-muted/20'>
+                <div className='text-center'>
+                  <p className='font-medium text-[var(--text-secondary)] text-sm'>
+                    Error loading document
+                  </p>
+                  <p className='mt-1 text-[var(--text-muted)] text-xs'>{combinedError}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -658,191 +625,378 @@ export function Document({
   }
 
   return (
-    <div className='flex h-[100vh] flex-col pl-64'>
-      {/* Fixed Header with Breadcrumbs */}
-      <KnowledgeHeader breadcrumbs={breadcrumbs} />
-
+    <div className='flex h-full flex-1 flex-col'>
       <div className='flex flex-1 overflow-hidden'>
-        <div className='flex flex-1 flex-col overflow-hidden'>
-          {/* Main Content */}
-          <div className='flex-1 overflow-auto'>
-            <div className='px-6 pb-6'>
-              {/* Search Section */}
-              <div className='mb-4 flex items-center justify-between pt-1'>
-                <SearchInput
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  placeholder={
-                    documentData?.processingStatus === 'completed'
-                      ? 'Search chunks...'
-                      : 'Document processing...'
-                  }
-                  disabled={documentData?.processingStatus !== 'completed'}
-                  isLoading={isLoadingSearch}
-                />
+        <div className='flex flex-1 flex-col overflow-auto bg-white px-[24px] pt-[24px] pb-[24px] dark:bg-[var(--bg)]'>
+          <Breadcrumb items={breadcrumbItems} />
 
+          <div className='mt-[14px] flex items-center justify-between'>
+            <h1 className='font-medium text-[18px] text-[var(--text-primary)]'>
+              {effectiveDocumentName}
+            </h1>
+            <div className='flex items-center gap-2'>
+              {userPermissions.canEdit && (
+                <Button
+                  onClick={() => setShowTagsModal(true)}
+                  variant='default'
+                  className='h-[32px] rounded-[6px]'
+                >
+                  Tags
+                </Button>
+              )}
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <Button
+                    onClick={() => setShowDeleteDocumentDialog(true)}
+                    disabled={!userPermissions.canEdit}
+                    className='h-[32px] rounded-[6px]'
+                  >
+                    <Trash className='h-[14px] w-[14px]' />
+                  </Button>
+                </Tooltip.Trigger>
+                {!userPermissions.canEdit && (
+                  <Tooltip.Content>Write permission required to delete document</Tooltip.Content>
+                )}
+              </Tooltip.Root>
+            </div>
+          </div>
+
+          <p className='mt-[4px] font-medium text-[14px] text-[var(--text-tertiary)]'>
+            {documentData?.chunkCount ?? 0} {documentData?.chunkCount === 1 ? 'chunk' : 'chunks'}
+          </p>
+
+          <div className='mt-[16px] flex items-center gap-[8px]'>
+            <span className='text-[14px] text-[var(--text-muted)]'>
+              {documentData?.tokenCount !== undefined
+                ? documentData.tokenCount > 1000
+                  ? `${(documentData.tokenCount / 1000).toFixed(1)}k`
+                  : documentData.tokenCount.toLocaleString()
+                : '0'}{' '}
+              tokens
+            </span>
+            {documentData?.uploadedAt && (
+              <>
+                <div className='mb-[-1.5px] h-[18px] w-[1.25px] rounded-full bg-[#3A3A3A]' />
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <span className='cursor-default text-[14px] text-[var(--text-muted)]'>
+                      uploaded: {formatRelativeTime(documentData.uploadedAt)}
+                    </span>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>{formatAbsoluteDate(documentData.uploadedAt)}</Tooltip.Content>
+                </Tooltip.Root>
+              </>
+            )}
+          </div>
+
+          <div className='mt-[14px] flex items-center justify-between'>
+            <div className='flex h-[32px] w-[400px] items-center gap-[6px] rounded-[8px] bg-[var(--surface-4)] px-[8px]'>
+              <Search className='h-[14px] w-[14px] text-[var(--text-subtle)]' />
+              <Input
+                placeholder={
+                  documentData?.processingStatus === 'completed'
+                    ? 'Search chunks...'
+                    : 'Document processing...'
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                disabled={documentData?.processingStatus !== 'completed'}
+                className='flex-1 border-0 bg-transparent px-0 font-medium text-[var(--text-secondary)] text-small leading-none placeholder:text-[var(--text-subtle)] focus-visible:ring-0 focus-visible:ring-offset-0'
+              />
+              {searchQuery &&
+                (isLoadingSearch ? (
+                  <Loader2 className='h-[14px] w-[14px] animate-spin text-[var(--text-subtle)]' />
+                ) : (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className='text-[var(--text-subtle)] transition-colors hover:text-[var(--text-secondary)]'
+                  >
+                    <X className='h-[14px] w-[14px]' />
+                  </button>
+                ))}
+            </div>
+
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
                 <Button
                   onClick={() => setIsCreateChunkModalOpen(true)}
                   disabled={documentData?.processingStatus === 'failed' || !userPermissions.canEdit}
-                  size='sm'
-                  className='flex items-center gap-1 bg-[var(--brand-primary-hex)] font-[480] text-white shadow-[0_0_0_0_var(--brand-primary-hex)] transition-all duration-200 hover:bg-[var(--brand-primary-hover-hex)] hover:shadow-[0_0_0_4px_rgba(127,47,255,0.15)] disabled:cursor-not-allowed disabled:opacity-50'
+                  variant='tertiary'
+                  className='h-[32px] rounded-[6px]'
                 >
-                  <Plus className='h-3.5 w-3.5' />
-                  <span>Create Chunk</span>
+                  Create Chunk
                 </Button>
-              </div>
-
-              {/* Document Tag Entry moved to sidebar */}
-
-              {/* Error State for chunks */}
-              {combinedError && (
-                <div className='mb-4 rounded-md border border-red-200 bg-red-50 p-4'>
-                  <p className='text-red-800 text-sm'>Error loading chunks: {combinedError}</p>
-                </div>
+              </Tooltip.Trigger>
+              {!userPermissions.canEdit && (
+                <Tooltip.Content>Write permission required to create chunks</Tooltip.Content>
               )}
+            </Tooltip.Root>
+          </div>
 
-              {
-                /* Table container */
-                <div className='flex flex-1 flex-col overflow-hidden'>
-                  {/* Table header - fixed */}
-                  <div className='sticky top-0 z-10 border-b bg-background'>
-                    <table className='w-full table-fixed'>
-                      <colgroup>
-                        <col className='w-[5%]' />
-                        <col className='w-[8%]' />
-                        <col className='w-[55%]' />
-                        <col className='w-[10%]' />
-                        <col className='w-[10%]' />
-                        <col className='w-[12%]' />
-                      </colgroup>
-                      <thead>
-                        <tr>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <Checkbox
-                              checked={isAllSelected}
-                              onCheckedChange={handleSelectAll}
-                              disabled={
-                                documentData?.processingStatus !== 'completed' ||
-                                !userPermissions.canEdit
-                              }
-                              aria-label='Select all chunks'
-                              className='h-3.5 w-3.5 border-gray-300 focus-visible:ring-[var(--brand-primary-hex)]/20 data-[state=checked]:border-[var(--brand-primary-hex)] data-[state=checked]:bg-[var(--brand-primary-hex)] [&>*]:h-3 [&>*]:w-3'
-                            />
-                          </th>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <span className='text-muted-foreground text-xs leading-none'>
-                              Index
-                            </span>
-                          </th>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <span className='text-muted-foreground text-xs leading-none'>
-                              Content
-                            </span>
-                          </th>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <span className='text-muted-foreground text-xs leading-none'>
-                              Tokens
-                            </span>
-                          </th>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <span className='text-muted-foreground text-xs leading-none'>
-                              Status
-                            </span>
-                          </th>
-                          <th className='px-4 pt-2 pb-3 text-left font-medium'>
-                            <span className='text-muted-foreground text-xs leading-none'>
-                              Actions
-                            </span>
-                          </th>
-                        </tr>
-                      </thead>
-                    </table>
-                  </div>
-
-                  {/* Table body - scrollable */}
-                  <div className='flex-1 overflow-auto'>
-                    <table className='w-full table-fixed'>
-                      <colgroup>
-                        <col className='w-[5%]' />
-                        <col className='w-[8%]' />
-                        <col className='w-[55%]' />
-                        <col className='w-[10%]' />
-                        <col className='w-[10%]' />
-                        <col className='w-[12%]' />
-                      </colgroup>
-                      <tbody>
-                        {showingSearch ? (
-                          <Suspense fallback={renderChunks()}>{renderChunks()}</Suspense>
-                        ) : (
-                          renderChunks()
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Pagination Controls */}
-                  {documentData?.processingStatus === 'completed' && totalPages > 1 && (
-                    <div className='flex items-center justify-center border-t bg-background px-6 py-4'>
-                      <div className='flex items-center gap-1'>
-                        <Button
-                          variant='ghost'
-                          size='sm'
-                          onClick={prevPage}
-                          disabled={!hasPrevPage}
-                          className='h-8 w-8 p-0'
-                        >
-                          <ChevronLeft className='h-4 w-4' />
-                        </Button>
-
-                        {/* Page numbers - show a few around current page */}
-                        <div className='mx-4 flex items-center gap-6'>
-                          {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                            let page: number
-                            if (totalPages <= 5) {
-                              page = i + 1
-                            } else if (currentPage <= 3) {
-                              page = i + 1
-                            } else if (currentPage >= totalPages - 2) {
-                              page = totalPages - 4 + i
-                            } else {
-                              page = currentPage - 2 + i
-                            }
-
-                            if (page < 1 || page > totalPages) return null
-
-                            return (
-                              <button
-                                key={page}
-                                onClick={() => goToPage(page)}
-                                disabled={false}
-                                className={`font-medium text-sm transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 ${
-                                  page === currentPage ? 'text-foreground' : 'text-muted-foreground'
-                                }`}
-                              >
-                                {page}
-                              </button>
-                            )
-                          })}
-                        </div>
-
-                        <Button
-                          variant='ghost'
-                          size='sm'
-                          onClick={nextPage}
-                          disabled={!hasNextPage}
-                          className='h-8 w-8 p-0'
-                        >
-                          <ChevronRight className='h-4 w-4' />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+          <div
+            className='mt-[12px] flex flex-1 flex-col overflow-hidden'
+            onContextMenu={handleEmptyContextMenu}
+          >
+            {displayChunks.length === 0 && documentData?.processingStatus === 'completed' ? (
+              <div className='mt-[10px] flex h-64 items-center justify-center rounded-lg border border-muted-foreground/25 bg-muted/20'>
+                <div className='text-center'>
+                  <p className='font-medium text-[var(--text-secondary)] text-sm'>
+                    {searchQuery ? 'No chunks found' : 'No chunks yet'}
+                  </p>
+                  <p className='mt-1 text-[var(--text-muted)] text-xs'>
+                    {searchQuery
+                      ? 'Try a different search term'
+                      : userPermissions.canEdit
+                        ? 'Create chunks to get started'
+                        : 'Chunks will appear here once created'}
+                  </p>
                 </div>
-              }
-            </div>
+              </div>
+            ) : (
+              <Table className='min-w-[700px] table-fixed text-[13px]'>
+                <TableHeader>
+                  <TableRow className='hover:bg-transparent'>
+                    <TableHead
+                      className='w-[52px] py-[8px]'
+                      style={{ paddingLeft: '20.5px', paddingRight: 0 }}
+                    >
+                      <div className='flex items-center'>
+                        <Checkbox
+                          size='sm'
+                          checked={isAllSelected}
+                          onCheckedChange={handleSelectAll}
+                          disabled={
+                            documentData?.processingStatus !== 'completed' ||
+                            !userPermissions.canEdit
+                          }
+                          aria-label='Select all chunks'
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className='w-[60px] py-[8px] pr-[12px] pl-[15px] text-[12px] text-[var(--text-secondary)]'>
+                      Index
+                    </TableHead>
+                    <TableHead className='px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+                      Content
+                    </TableHead>
+                    <TableHead className='w-[8%] px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+                      Tokens
+                    </TableHead>
+                    <TableHead className='w-[12%] px-[12px] py-[8px] text-[12px] text-[var(--text-secondary)]'>
+                      Status
+                    </TableHead>
+                    <TableHead className='w-[14%] py-[8px] pr-[4px] pl-[12px] text-[12px] text-[var(--text-secondary)]'>
+                      Actions
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {documentData?.processingStatus !== 'completed' ? (
+                    <TableRow className='hover:bg-transparent'>
+                      <TableCell
+                        className='w-[52px] py-[8px]'
+                        style={{ paddingLeft: '20.5px', paddingRight: 0 }}
+                      >
+                        <div className='flex items-center'>
+                          <div className='h-[14px] w-[14px]' />
+                        </div>
+                      </TableCell>
+                      <TableCell className='w-[60px] px-[12px] py-[8px] text-[12px] text-[var(--text-muted)]'>
+                        —
+                      </TableCell>
+                      <TableCell className='px-[12px] py-[8px]'>
+                        <div className='flex items-center gap-[8px]'>
+                          <FileText className='h-5 w-5 flex-shrink-0 text-[var(--text-muted)]' />
+                          <span className='text-[14px] text-[var(--text-muted)] italic'>
+                            {documentData?.processingStatus === 'pending' &&
+                              'Document processing pending...'}
+                            {documentData?.processingStatus === 'processing' &&
+                              'Document processing in progress...'}
+                            {documentData?.processingStatus === 'failed' &&
+                              'Document processing failed'}
+                            {!documentData?.processingStatus && 'Document not ready'}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className='w-[8%] px-[12px] py-[8px] text-[12px] text-[var(--text-muted)]'>
+                        —
+                      </TableCell>
+                      <TableCell className='w-[12%] px-[12px] py-[8px] text-[12px] text-[var(--text-muted)]'>
+                        —
+                      </TableCell>
+                      <TableCell className='w-[14%] py-[8px] pr-[4px] pl-[12px] text-[12px] text-[var(--text-muted)]'>
+                        —
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    displayChunks.map((chunk: ChunkData) => {
+                      const isSelected = selectedChunks.has(chunk.id)
+
+                      return (
+                        <TableRow
+                          key={chunk.id}
+                          className={`${
+                            isSelected
+                              ? 'bg-[var(--surface-3)] dark:bg-[var(--surface-4)]'
+                              : 'hover:bg-[var(--surface-3)] dark:hover:bg-[var(--surface-4)]'
+                          } cursor-pointer`}
+                          onClick={() => handleChunkClick(chunk)}
+                          onContextMenu={(e) => handleChunkContextMenu(e, chunk)}
+                        >
+                          <TableCell
+                            className='w-[52px] py-[8px]'
+                            style={{ paddingLeft: '20.5px', paddingRight: 0 }}
+                          >
+                            <div className='flex items-center'>
+                              <Checkbox
+                                size='sm'
+                                checked={selectedChunks.has(chunk.id)}
+                                onCheckedChange={(checked) =>
+                                  handleSelectChunk(chunk.id, checked as boolean)
+                                }
+                                disabled={!userPermissions.canEdit}
+                                aria-label={`Select chunk ${chunk.chunkIndex}`}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell className='w-[60px] py-[8px] pr-[12px] pl-[15px] font-mono text-[14px] text-[var(--text-primary)]'>
+                            {chunk.chunkIndex}
+                          </TableCell>
+                          <TableCell className='px-[12px] py-[8px]'>
+                            <span
+                              className='block min-w-0 truncate text-[14px] text-[var(--text-primary)]'
+                              title={chunk.content}
+                            >
+                              <SearchHighlight
+                                text={truncateContent(chunk.content, 150, searchQuery)}
+                                searchQuery={searchQuery}
+                              />
+                            </span>
+                          </TableCell>
+                          <TableCell className='w-[8%] px-[12px] py-[8px] text-[12px] text-[var(--text-muted)]'>
+                            {chunk.tokenCount > 1000
+                              ? `${(chunk.tokenCount / 1000).toFixed(1)}k`
+                              : chunk.tokenCount.toLocaleString()}
+                          </TableCell>
+                          <TableCell className='w-[12%] px-[12px] py-[8px]'>
+                            <Badge variant={chunk.enabled ? 'green' : 'gray'} size='sm'>
+                              {chunk.enabled ? 'Enabled' : 'Disabled'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className='w-[14%] py-[8px] pr-[4px] pl-[12px]'>
+                            <div className='flex items-center gap-[4px]'>
+                              <Tooltip.Root>
+                                <Tooltip.Trigger asChild>
+                                  <Button
+                                    variant='ghost'
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleToggleEnabled(chunk.id)
+                                    }}
+                                    disabled={!userPermissions.canEdit}
+                                    className='h-[28px] w-[28px] p-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50'
+                                  >
+                                    {chunk.enabled ? (
+                                      <Circle className='h-[14px] w-[14px]' />
+                                    ) : (
+                                      <CircleOff className='h-[14px] w-[14px]' />
+                                    )}
+                                  </Button>
+                                </Tooltip.Trigger>
+                                <Tooltip.Content side='top'>
+                                  {!userPermissions.canEdit
+                                    ? 'Write permission required to modify chunks'
+                                    : chunk.enabled
+                                      ? 'Disable Chunk'
+                                      : 'Enable Chunk'}
+                                </Tooltip.Content>
+                              </Tooltip.Root>
+                              <Tooltip.Root>
+                                <Tooltip.Trigger asChild>
+                                  <Button
+                                    variant='ghost'
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleDeleteChunk(chunk.id)
+                                    }}
+                                    disabled={!userPermissions.canEdit}
+                                    className='h-[28px] w-[28px] p-0 text-[var(--text-muted)] hover:text-[var(--text-error)] disabled:opacity-50'
+                                  >
+                                    <Trash className='h-[14px] w-[14px]' />
+                                  </Button>
+                                </Tooltip.Trigger>
+                                <Tooltip.Content side='top'>
+                                  {!userPermissions.canEdit
+                                    ? 'Write permission required to delete chunks'
+                                    : 'Delete Chunk'}
+                                </Tooltip.Content>
+                              </Tooltip.Root>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            )}
+
+            {documentData?.processingStatus === 'completed' && totalPages > 1 && (
+              <div className='flex items-center justify-center border-t bg-background px-4 pt-[10px]'>
+                <div className='flex items-center gap-1'>
+                  <Button variant='ghost' onClick={prevPage} disabled={!hasPrevPage}>
+                    <ChevronLeft className='h-3.5 w-3.5' />
+                  </Button>
+
+                  <div className='mx-[12px] flex items-center gap-[16px]'>
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                      let page: number
+                      if (totalPages <= 5) {
+                        page = i + 1
+                      } else if (currentPage <= 3) {
+                        page = i + 1
+                      } else if (currentPage >= totalPages - 2) {
+                        page = totalPages - 4 + i
+                      } else {
+                        page = currentPage - 2 + i
+                      }
+
+                      if (page < 1 || page > totalPages) return null
+
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => goToPage(page)}
+                          disabled={false}
+                          className={`font-medium text-sm transition-colors hover:text-foreground disabled:opacity-50 ${
+                            page === currentPage ? 'text-foreground' : 'text-muted-foreground'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <Button variant='ghost' onClick={nextPage} disabled={!hasNextPage}>
+                    <ChevronRight className='h-3.5 w-3.5' />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      <DocumentTagsModal
+        open={showTagsModal}
+        onOpenChange={setShowTagsModal}
+        knowledgeBaseId={knowledgeBaseId}
+        documentId={documentId}
+        documentData={documentData}
+        onDocumentUpdate={handleDocumentTagsUpdate}
+      />
 
       {/* Edit Chunk Modal */}
       <EditChunkModal
@@ -851,16 +1005,13 @@ export function Document({
         knowledgeBaseId={knowledgeBaseId}
         isOpen={isModalOpen}
         onClose={handleCloseModal}
-        onChunkUpdate={(updatedChunk: ChunkData) => {
-          updateChunk(updatedChunk.id, updatedChunk)
-          setSelectedChunk(updatedChunk)
-        }}
         allChunks={displayChunks}
         currentPage={currentPage}
         totalPages={totalPages}
         onNavigateToChunk={(chunk: ChunkData) => {
           setSelectedChunk(chunk)
         }}
+        maxChunkSize={knowledgeBase?.chunkingConfig?.maxSize}
         onNavigateToPage={async (page: number, selectChunk: 'first' | 'last') => {
           await goToPage(page)
 
@@ -872,7 +1023,6 @@ export function Document({
                 setSelectedChunk(displayChunks[displayChunks.length - 1])
               }
             } else {
-              // Retry after a short delay if chunks aren't loaded yet
               setTimeout(checkAndSelectChunk, 100)
             }
           }
@@ -887,7 +1037,6 @@ export function Document({
         onOpenChange={setIsCreateChunkModalOpen}
         document={documentData}
         knowledgeBaseId={knowledgeBaseId}
-        onChunkCreated={handleChunkCreated}
       />
 
       {/* Delete Chunk Modal */}
@@ -897,7 +1046,6 @@ export function Document({
         documentId={documentId}
         isOpen={isDeleteModalOpen}
         onClose={handleCloseDeleteModal}
-        onChunkDeleted={handleChunkDeleted}
       />
 
       {/* Bulk Action Bar */}
@@ -909,6 +1057,104 @@ export function Document({
         enabledCount={enabledCount}
         disabledCount={disabledCount}
         isLoading={isBulkOperating}
+      />
+
+      {/* Delete Document Modal */}
+      <Modal open={showDeleteDocumentDialog} onOpenChange={setShowDeleteDocumentDialog}>
+        <ModalContent size='sm'>
+          <ModalHeader>Delete Document</ModalHeader>
+          <ModalBody>
+            <p className='text-[12px] text-[var(--text-secondary)]'>
+              Are you sure you want to delete{' '}
+              <span className='font-medium text-[var(--text-primary)]'>
+                {effectiveDocumentName}
+              </span>
+              ? This will permanently delete the document and all {documentData?.chunkCount ?? 0}{' '}
+              chunk
+              {documentData?.chunkCount === 1 ? '' : 's'} within it.{' '}
+              <span className='text-[var(--text-error)]'>This action cannot be undone.</span>
+            </p>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant='default'
+              onClick={() => setShowDeleteDocumentDialog(false)}
+              disabled={isDeletingDocument}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant='destructive'
+              onClick={handleDeleteDocument}
+              disabled={isDeletingDocument}
+            >
+              {isDeletingDocument ? 'Deleting...' : 'Delete Document'}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <ChunkContextMenu
+        isOpen={isContextMenuOpen}
+        position={contextMenuPosition}
+        menuRef={menuRef}
+        onClose={handleContextMenuClose}
+        hasChunk={contextMenuChunk !== null}
+        isChunkEnabled={contextMenuChunk?.enabled ?? true}
+        selectedCount={selectedChunks.size}
+        enabledCount={enabledCount}
+        disabledCount={disabledCount}
+        onOpenInNewTab={
+          contextMenuChunk && selectedChunks.size === 1
+            ? () => {
+                const url = `/workspace/${workspaceId}/knowledge/${knowledgeBaseId}/${documentId}?chunk=${contextMenuChunk.id}`
+                window.open(url, '_blank')
+              }
+            : undefined
+        }
+        onEdit={
+          contextMenuChunk && selectedChunks.size === 1
+            ? () => {
+                setSelectedChunk(contextMenuChunk)
+                setIsModalOpen(true)
+              }
+            : undefined
+        }
+        onCopyContent={
+          contextMenuChunk && selectedChunks.size === 1
+            ? () => {
+                navigator.clipboard.writeText(contextMenuChunk.content)
+              }
+            : undefined
+        }
+        onToggleEnabled={
+          contextMenuChunk && userPermissions.canEdit
+            ? selectedChunks.size > 1
+              ? () => {
+                  if (disabledCount > 0) {
+                    handleBulkEnable()
+                  } else {
+                    handleBulkDisable()
+                  }
+                }
+              : () => handleToggleEnabled(contextMenuChunk.id)
+            : undefined
+        }
+        onDelete={
+          contextMenuChunk && userPermissions.canEdit
+            ? selectedChunks.size > 1
+              ? handleBulkDelete
+              : () => handleDeleteChunk(contextMenuChunk.id)
+            : undefined
+        }
+        onAddChunk={
+          userPermissions.canEdit && documentData?.processingStatus !== 'failed'
+            ? () => setIsCreateChunkModalOpen(true)
+            : undefined
+        }
+        disableToggleEnabled={!userPermissions.canEdit}
+        disableDelete={!userPermissions.canEdit}
+        disableAddChunk={!userPermissions.canEdit || documentData?.processingStatus === 'failed'}
       />
     </div>
   )

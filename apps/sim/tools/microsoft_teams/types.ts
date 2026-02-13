@@ -1,4 +1,29 @@
-import type { ToolResponse } from '@/tools/types'
+import type { UserFile } from '@/executor/types'
+import type { ToolFileData, ToolResponse } from '@/tools/types'
+
+export interface GraphApiErrorResponse {
+  error?: {
+    message?: string
+  }
+}
+
+export interface GraphDriveItem {
+  id: string
+  webUrl?: string
+  webDavUrl?: string
+  eTag?: string
+  name?: string
+  size?: number
+}
+
+export interface GraphChatMessage {
+  id?: string
+  chatId?: string
+  channelIdentity?: { teamId?: string; channelId?: string }
+  body?: { content?: string }
+  createdDateTime?: string
+  webUrl?: string
+}
 
 export interface MicrosoftTeamsAttachment {
   id: string
@@ -29,6 +54,13 @@ export interface MicrosoftTeamsMetadata {
     timestamp: string
     messageType: string
     attachments?: MicrosoftTeamsAttachment[]
+    uploadedFiles?: {
+      path: string
+      key: string
+      name: string
+      size: number
+      type: string
+    }[]
   }>
   // Global attachments summary
   totalAttachments?: number
@@ -39,6 +71,13 @@ export interface MicrosoftTeamsReadResponse extends ToolResponse {
   output: {
     content: string
     metadata: MicrosoftTeamsMetadata
+    attachments?: Array<{
+      path: string
+      key: string
+      name: string
+      size: number
+      type: string
+    }>
   }
 }
 
@@ -46,6 +85,7 @@ export interface MicrosoftTeamsWriteResponse extends ToolResponse {
   output: {
     updatedContent: boolean
     metadata: MicrosoftTeamsMetadata
+    files?: ToolFileData[]
   }
 }
 
@@ -56,6 +96,81 @@ export interface MicrosoftTeamsToolParams {
   channelId?: string
   teamId?: string
   content?: string
+  includeAttachments?: boolean
+  files?: UserFile[]
+  reactionType?: string // For reaction operations
 }
 
-export type MicrosoftTeamsResponse = MicrosoftTeamsReadResponse | MicrosoftTeamsWriteResponse
+// Update message params
+export interface MicrosoftTeamsUpdateMessageParams extends MicrosoftTeamsToolParams {
+  messageId: string
+  content: string
+}
+
+// Delete message params
+export interface MicrosoftTeamsDeleteMessageParams extends MicrosoftTeamsToolParams {
+  messageId: string
+}
+
+// Reply to message params
+export interface MicrosoftTeamsReplyParams extends MicrosoftTeamsToolParams {
+  messageId: string
+  content: string
+}
+
+// Reaction params
+export interface MicrosoftTeamsReactionParams extends MicrosoftTeamsToolParams {
+  messageId: string
+  reactionType: string
+}
+
+// Get message params
+export interface MicrosoftTeamsGetMessageParams extends MicrosoftTeamsToolParams {
+  messageId: string
+}
+
+// Member list response
+export interface MicrosoftTeamsMember {
+  id: string
+  displayName: string
+  email?: string
+  userId?: string
+  roles?: string[]
+}
+
+export interface MicrosoftTeamsListMembersResponse extends ToolResponse {
+  output: {
+    members: MicrosoftTeamsMember[]
+    memberCount: number
+    metadata: {
+      teamId?: string
+      channelId?: string
+    }
+  }
+}
+
+// Delete response
+export interface MicrosoftTeamsDeleteResponse extends ToolResponse {
+  output: {
+    deleted: boolean
+    messageId: string
+    metadata: MicrosoftTeamsMetadata
+  }
+}
+
+// Reaction response
+export interface MicrosoftTeamsReactionResponse extends ToolResponse {
+  output: {
+    success: boolean
+    reactionType: string
+    messageId: string
+    metadata: MicrosoftTeamsMetadata
+  }
+}
+
+export type MicrosoftTeamsResponse =
+  | MicrosoftTeamsReadResponse
+  | MicrosoftTeamsWriteResponse
+  | MicrosoftTeamsDeleteResponse
+  | MicrosoftTeamsListMembersResponse
+  | MicrosoftTeamsReactionResponse

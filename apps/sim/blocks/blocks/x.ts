@@ -1,13 +1,15 @@
 import { xIcon } from '@/components/icons'
 import type { BlockConfig } from '@/blocks/types'
+import { AuthMode } from '@/blocks/types'
 import type { XResponse } from '@/tools/x/types'
 
 export const XBlock: BlockConfig<XResponse> = {
   type: 'x',
   name: 'X',
   description: 'Interact with X',
+  authMode: AuthMode.OAuth,
   longDescription:
-    'Integrate X into the workflow. Can post a new tweet, get tweet details, search tweets, and get user profile. Requires OAuth.',
+    'Integrate X into the workflow. Can post a new tweet, get tweet details, search tweets, and get user profile.',
   docsLink: 'https://docs.sim.ai/tools/x',
   category: 'tools',
   bgColor: '#000000', // X's black color
@@ -17,7 +19,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'operation',
       title: 'Operation',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'Post a New Tweet', id: 'x_write' },
         { label: 'Get Tweet Details', id: 'x_read' },
@@ -30,17 +31,14 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'credential',
       title: 'X Account',
       type: 'oauth-input',
-      layout: 'full',
-      provider: 'x',
       serviceId: 'x',
-      requiredScopes: ['tweet.read', 'tweet.write', 'users.read'],
+      requiredScopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
       placeholder: 'Select X account',
     },
     {
       id: 'text',
       title: 'Tweet Text',
       type: 'long-input',
-      layout: 'full',
       placeholder: "What's happening?",
       condition: { field: 'operation', value: 'x_write' },
       required: true,
@@ -49,7 +47,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'replyTo',
       title: 'Reply To (Tweet ID)',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter tweet ID to reply to',
       condition: { field: 'operation', value: 'x_write' },
     },
@@ -57,7 +54,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'mediaIds',
       title: 'Media IDs',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter comma-separated media IDs',
       condition: { field: 'operation', value: 'x_write' },
     },
@@ -65,7 +61,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'tweetId',
       title: 'Tweet ID',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter tweet ID to read',
       condition: { field: 'operation', value: 'x_read' },
       required: true,
@@ -74,7 +69,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'includeReplies',
       title: 'Include Replies',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'true', id: 'true' },
         { label: 'false', id: 'false' },
@@ -86,7 +80,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'query',
       title: 'Search Query',
       type: 'long-input',
-      layout: 'full',
       placeholder: 'Enter search terms (supports X search operators)',
       condition: { field: 'operation', value: 'x_search' },
       required: true,
@@ -95,7 +88,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'maxResults',
       title: 'Max Results',
       type: 'short-input',
-      layout: 'full',
       placeholder: '10',
       condition: { field: 'operation', value: 'x_search' },
     },
@@ -103,7 +95,6 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'sortOrder',
       title: 'Sort Order',
       type: 'dropdown',
-      layout: 'full',
       options: [
         { label: 'recency', id: 'recency' },
         { label: 'relevancy', id: 'relevancy' },
@@ -115,23 +106,48 @@ export const XBlock: BlockConfig<XResponse> = {
       id: 'startTime',
       title: 'Start Time',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'YYYY-MM-DDTHH:mm:ssZ',
       condition: { field: 'operation', value: 'x_search' },
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate an ISO 8601 timestamp based on the user's description.
+The timestamp should be in the format: YYYY-MM-DDTHH:mm:ssZ (UTC timezone).
+Examples:
+- "yesterday" -> Calculate yesterday's date at 00:00:00Z
+- "last week" -> Calculate 7 days ago at 00:00:00Z
+- "beginning of this month" -> Calculate the 1st of current month at 00:00:00Z
+- "2 hours ago" -> Calculate the timestamp 2 hours before now
+
+Return ONLY the timestamp string - no explanations, no quotes, no extra text.`,
+        placeholder: 'Describe the start time (e.g., "last week", "yesterday")...',
+        generationType: 'timestamp',
+      },
     },
     {
       id: 'endTime',
       title: 'End Time',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'YYYY-MM-DDTHH:mm:ssZ',
       condition: { field: 'operation', value: 'x_search' },
+      wandConfig: {
+        enabled: true,
+        prompt: `Generate an ISO 8601 timestamp based on the user's description.
+The timestamp should be in the format: YYYY-MM-DDTHH:mm:ssZ (UTC timezone).
+Examples:
+- "now" -> Current timestamp
+- "today" -> Today's date at 23:59:59Z
+- "end of this week" -> Calculate the end of current week at 23:59:59Z
+- "yesterday evening" -> Calculate yesterday at 23:59:59Z
+
+Return ONLY the timestamp string - no explanations, no quotes, no extra text.`,
+        placeholder: 'Describe the end time (e.g., "now", "end of today")...',
+        generationType: 'timestamp',
+      },
     },
     {
       id: 'username',
       title: 'Username',
       type: 'short-input',
-      layout: 'full',
       placeholder: 'Enter username (without @)',
       condition: { field: 'operation', value: 'x_user' },
       required: true,
@@ -157,32 +173,23 @@ export const XBlock: BlockConfig<XResponse> = {
       params: (params) => {
         const { credential, ...rest } = params
 
-        // Convert string values to appropriate types
         const parsedParams: Record<string, any> = {
           credential: credential,
         }
 
-        // Add other params
         Object.keys(rest).forEach((key) => {
           const value = rest[key]
 
-          // Convert string boolean values to actual booleans
           if (value === 'true' || value === 'false') {
             parsedParams[key] = value === 'true'
-          }
-          // Convert numeric strings to numbers where appropriate
-          else if (key === 'maxResults' && value) {
+          } else if (key === 'maxResults' && value) {
             parsedParams[key] = Number.parseInt(value as string, 10)
-          }
-          // Handle mediaIds conversion from comma-separated string to array
-          else if (key === 'mediaIds' && typeof value === 'string') {
+          } else if (key === 'mediaIds' && typeof value === 'string') {
             parsedParams[key] = value
               .split(',')
               .map((id) => id.trim())
               .filter((id) => id !== '')
-          }
-          // Keep other values as is
-          else {
+          } else {
             parsedParams[key] = value
           }
         })
@@ -209,13 +216,49 @@ export const XBlock: BlockConfig<XResponse> = {
     includeRecentTweets: { type: 'boolean', description: 'Include recent tweets' },
   },
   outputs: {
-    tweet: { type: 'json', description: 'Tweet data' },
-    replies: { type: 'json', description: 'Tweet replies' },
-    context: { type: 'json', description: 'Tweet context' },
-    tweets: { type: 'json', description: 'Tweets data' },
-    includes: { type: 'json', description: 'Additional data' },
-    meta: { type: 'json', description: 'Response metadata' },
-    user: { type: 'json', description: 'User profile data' },
-    recentTweets: { type: 'json', description: 'Recent tweets data' },
+    // Write and Read operation outputs
+    tweet: {
+      type: 'json',
+      description: 'Tweet data including contextAnnotations and publicMetrics',
+      condition: { field: 'operation', value: ['x_write', 'x_read'] },
+    },
+    // Read operation outputs
+    replies: {
+      type: 'json',
+      description: 'Tweet replies (when includeReplies is true)',
+      condition: { field: 'operation', value: 'x_read' },
+    },
+    context: {
+      type: 'json',
+      description: 'Tweet context (parent and quoted tweets)',
+      condition: { field: 'operation', value: 'x_read' },
+    },
+    // Search operation outputs
+    tweets: {
+      type: 'json',
+      description: 'Tweets data including contextAnnotations and publicMetrics',
+      condition: { field: 'operation', value: 'x_search' },
+    },
+    includes: {
+      type: 'json',
+      description: 'Additional data (users, media, polls)',
+      condition: { field: 'operation', value: 'x_search' },
+    },
+    meta: {
+      type: 'json',
+      description: 'Response metadata',
+      condition: { field: 'operation', value: 'x_search' },
+    },
+    // User operation outputs
+    user: {
+      type: 'json',
+      description: 'User profile data',
+      condition: { field: 'operation', value: 'x_user' },
+    },
+    recentTweets: {
+      type: 'json',
+      description: 'Recent tweets data',
+      condition: { field: 'operation', value: 'x_user' },
+    },
   },
 }
